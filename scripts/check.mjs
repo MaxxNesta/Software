@@ -31,7 +31,17 @@ if (!url) {
 }
 
 const local = url.includes("localhost") || url.includes("127.0.0.1");
-const sql = postgres(url, { ssl: local ? false : "require", onnotice: () => {}, max: 1 });
+
+// Pooled endpoints are PgBouncer in transaction mode and reject prepared
+// statements, which postgres.js uses by default.
+const pooled = url.includes("-pooler.") || url.includes("pgbouncer=true");
+
+const sql = postgres(url, {
+  ssl: local ? false : "require",
+  prepare: !pooled,
+  onnotice: () => {},
+  max: 1,
+});
 
 const info = [
   ["company", "select name as v from company limit 1"],

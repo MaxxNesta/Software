@@ -9,12 +9,20 @@ function connect() {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
 
+  const isLocal = url.includes("localhost") || url.includes("127.0.0.1");
+
+  // Neon's pooled endpoint is PgBouncer in transaction mode, which does not
+  // support prepared statements. postgres.js prepares by default, so every
+  // query would fail against a pooled URL unless this is turned off.
+  const isPooled = url.includes("-pooler.") || url.includes("pgbouncer=true");
+
   return postgres(url, {
     // Serverless: keep the pool small and let idle connections go.
     max: process.env.VERCEL ? 1 : 5,
     idle_timeout: 20,
     connect_timeout: 10,
-    ssl: url.includes("localhost") || url.includes("127.0.0.1") ? false : "require",
+    ssl: isLocal ? false : "require",
+    prepare: !isPooled,
     onnotice: () => {},
     transform: { undefined: null },
   });
