@@ -60,14 +60,59 @@ create table document (
 
     unique (company_id, doc_type, doc_no),
 
-    -- A posted document must carry its number and its posting.
-    check (status <> 'POSTED' or (doc_no is not null and journal_entry_id is not null))
+    -- A posted document must carry its number. It need not carry a journal
+    -- entry: orders post nothing by design, and a transfer between locations
+    -- sharing an inventory account posts nothing either. Which types must
+    -- post is enforced by trg_document_posting below.
+    check (status <> 'POSTED' or doc_no is not null)
 );
 
 create index on document (company_id, doc_type, posting_date);
 create index on document (company_id, partner_id) where partner_id is not null;
 create index on document (source_document_id) where source_document_id is not null;
 create index on document (company_id, status);
+
+-- Document types that MUST produce a posting once they are posted. Orders
+-- and same-account transfers are deliberately absent — they move nothing in
+-- the ledger, and requiring an entry from them would force empty postings.
+--
+-- Deferred to commit, because the journal entry references the document as
+-- its source and the document references the entry back; one of the two has
+-- to be written second.
+create or replace function fn_document_posting_required() returns trigger
+language plpgsql as $$
+declare
+    d document;
+begin
+    -- Re-read rather than trusting NEW: a deferred trigger fires at commit
+    -- with the tuple captured when the event was queued, and the journal
+    -- entry is linked after the document row is inserted.
+    select * into d from document where id = new.id;
+    if not found then
+        return null;
+    end if;
+
+    if d.status = 'POSTED'
+       and d.journal_entry_id is null
+       and d.doc_type in (
+            'GOODS_RECEIPT', 'PURCHASE_INVOICE', 'PURCHASE_RETURN',
+            'SUPPLIER_PAYMENT', 'DELIVERY', 'SALES_INVOICE',
+            'SALES_RETURN', 'CUSTOMER_RECEIPT', 'STOCK_ADJUSTMENT',
+            'OPENING_BALANCE')
+    then
+        raise exception
+            'Document % (%) is posted but has no journal entry',
+            d.doc_no, d.doc_type;
+    end if;
+
+    return null;
+end;
+$$;
+
+create constraint trigger trg_document_posting_required
+    after insert or update on document
+    deferrable initially deferred
+    for each row execute function fn_document_posting_required();
 
 -- ---------------------------------------------------------- document lines --
 

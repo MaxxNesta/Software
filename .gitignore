@@ -30,3 +30,7 @@ build/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Next.js
+.next/
+next-env.d.ts
