@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { money, qty } from "@/lib/db";
 import { getCompany, getItems } from "@/lib/queries";
 
@@ -23,7 +24,11 @@ export default async function Items() {
         <div className="card">
           <div className="card-head">
             <h2>Items</h2>
-            <span className="page-sub">{items.length} items</span>
+            <span className="actions">
+              <span className="page-sub">{items.length} items</span>
+              <Link href="/items/categories"><button type="button" className="ghost">Categories</button></Link>
+              <Link href="/items/new"><button type="button">New item</button></Link>
+            </span>
           </div>
           <div className="tablewrap">
             <table>

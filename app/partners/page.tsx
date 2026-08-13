@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { money } from "@/lib/db";
 import { getCompany, getPartners } from "@/lib/queries";
 
@@ -22,7 +23,10 @@ export default async function Partners() {
         <div className="card">
           <div className="card-head">
             <h2>Partners</h2>
-            <span className="page-sub">{partners.length} records</span>
+            <span className="actions">
+              <span className="page-sub">{partners.length} records</span>
+              <Link href="/partners/new"><button type="button">New partner</button></Link>
+            </span>
           </div>
           <div className="tablewrap">
             <table>

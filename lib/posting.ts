@@ -1,0 +1,326 @@
+import type { TransactionSql } from "postgres";
+import { sql } from "./db";
+
+// The posting engine.
+//
+// A document describes what happened. This turns that into journal entries
+// and stock movements, resolving every GL account from the item group, the
+// partner, and the posting rules — never from anything the caller passed in.
+//
+// Everything for one document happens in a single transaction. If the ledger
+// would not balance, or stock would go negative, or the period is closed, the
+// whole thing rolls back and no document exists.
+
+export type InvoiceLine = {
+  itemId: string;
+  qty: number;
+  unitPrice: number;
+  focReasonId?: string | null;
+};
+
+export type InvoiceInput = {
+  companyId: string;
+  partnerId: string;
+  locationId: string;
+  docDate: string;
+  dueDate: string | null;
+  memo?: string | null;
+  lines: InvoiceLine[];
+};
+
+type JournalLine = {
+  accountId: string;
+  amount: number; // positive debit, negative credit
+  partnerId?: string | null;
+  locationId?: string | null;
+};
+
+function round4(n: number) {
+  return Math.round(n * 10000) / 10000;
+}
+
+/** Collapses journal lines that hit the same account, dropping any that net to zero. */
+function consolidate(lines: JournalLine[]): JournalLine[] {
+  const byKey = new Map<string, JournalLine>();
+
+  for (const l of lines) {
+    const key = `${l.accountId}|${l.partnerId ?? ""}|${l.locationId ?? ""}`;
+    const existing = byKey.get(key);
+    if (existing) existing.amount = round4(existing.amount + l.amount);
+    else byKey.set(key, { ...l, amount: round4(l.amount) });
+  }
+
+  return [...byKey.values()].filter((l) => l.amount !== 0);
+}
+
+async function writeJournal(
+  tx: TransactionSql,
+  companyId: string,
+  entryDate: string,
+  sourceType: string,
+  sourceId: string,
+  memo: string,
+  lines: JournalLine[]
+): Promise<string> {
+  const consolidated = consolidate(lines);
+
+  const total = round4(consolidated.reduce((s, l) => s + l.amount, 0));
+  if (total !== 0) {
+    // The database would reject this anyway; failing here gives a better message.
+    throw new Error(`Posting does not balance — debits and credits differ by ${total}`);
+  }
+
+  const fyRows = await tx`select fn_fiscal_year_for(${companyId}, ${entryDate}::date) as fy`;
+  const fiscalYear = fyRows[0]?.fy ?? null;
+  if (!fiscalYear) {
+    throw new Error(`No fiscal year covers ${entryDate}. Set one up before posting.`);
+  }
+
+  const noRows = await tx`
+    select fn_next_document_no(${companyId}, 'JOURNAL', ${fiscalYear}::uuid) as no`;
+
+  const [entry] = await tx`
+    insert into journal_entry
+      (company_id, entry_no, entry_date, fiscal_period_id, source_type, source_id, memo)
+    values
+      (${companyId}, ${noRows[0].no}, ${entryDate}::date, null,
+       ${sourceType}, ${sourceId}, ${memo})
+    returning id`;
+
+  let lineNo = 0;
+  for (const l of consolidated) {
+    lineNo++;
+    await tx`
+      insert into journal_line
+        (company_id, journal_entry_id, line_no, account_id, currency,
+         amount, exchange_rate, base_amount, partner_id, location_id)
+      values
+        (${companyId}, ${entry.id}, ${lineNo}, ${l.accountId}, 'MMK',
+         ${l.amount}, 1, ${l.amount}, ${l.partnerId ?? null}, ${l.locationId ?? null})`;
+  }
+
+  return entry.id;
+}
+
+/**
+ * Sales invoice: revenue is recognised, the customer owes money, stock leaves
+ * at its moving-average cost, and that cost becomes COGS.
+ *
+ *   Dr Accounts Receivable / Cr Sales Revenue
+ *   Dr Cost of Goods Sold  / Cr Inventory
+ *
+ * Free-of-charge lines move stock but post the cost to an expense account
+ * instead of COGS, and raise no revenue and no receivable.
+ */
+export async function postSalesInvoice(input: InvoiceInput) {
+  if (input.lines.length === 0) throw new Error("An invoice needs at least one line");
+
+  return sql.begin(async (tx) => {
+    const { companyId, partnerId, locationId, docDate, dueDate } = input;
+
+    const fyRows = await tx`select fn_fiscal_year_for(${companyId}, ${docDate}::date) as fy`;
+    const fiscalYear = fyRows[0]?.fy ?? null;
+    if (!fiscalYear) throw new Error(`No fiscal year covers ${docDate}`);
+
+    const noRows = await tx`
+      select fn_next_document_no(${companyId}, 'SALES_INVOICE', ${fiscalYear}::uuid) as no`;
+    const docNo = noRows[0].no;
+
+    const netTotal = round4(
+      input.lines.reduce((s, l) => s + (l.focReasonId ? 0 : l.qty * l.unitPrice), 0)
+    );
+
+    const [doc] = await tx`
+      insert into document
+        (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date, due_date,
+         partner_id, location_id, currency, exchange_rate, status,
+         net_total, tax_total, gross_total, memo, posted_at)
+      values
+        (${companyId}, 'SALES_INVOICE', ${docNo}, ${fiscalYear}, ${docDate}::date,
+         ${docDate}::date, ${dueDate}, ${partnerId}, ${locationId}, 'MMK', 1, 'POSTED',
+         ${netTotal}, 0, ${netTotal}, ${input.memo ?? null}, now())
+      returning id`;
+
+    const journal: JournalLine[] = [];
+    let lineNo = 0;
+
+    for (const line of input.lines) {
+      lineNo++;
+
+      const [item] = await tx`
+        select id, code, name, is_stocked, base_uom_id from item where id = ${line.itemId}`;
+      if (!item) throw new Error("Item not found");
+
+      const net = line.focReasonId ? 0 : round4(line.qty * line.unitPrice);
+
+      await tx`
+        insert into document_line
+          (company_id, document_id, line_no, item_id, location_id,
+           entered_qty, entered_uom_id, base_qty, unit_price,
+           net_amount, tax_amount, gross_amount, foc_reason_id)
+        values
+          (${companyId}, ${doc.id}, ${lineNo}, ${line.itemId}, ${locationId},
+           ${line.qty}, ${item.base_uom_id}, ${line.qty},
+           ${line.focReasonId ? 0 : line.unitPrice},
+           ${net}, 0, ${net}, ${line.focReasonId ?? null})`;
+
+      if (!item.is_stocked) {
+        // A service line: revenue only, nothing leaves the warehouse.
+        if (net !== 0) {
+          const revenue = await tx`
+            select fn_resolve_account_for_item(${companyId}, 'REVENUE', ${line.itemId}) as a`;
+          journal.push({ accountId: revenue[0].a, amount: -net });
+        }
+        continue;
+      }
+
+      // Cost is the moving average at this moment, frozen onto the movement.
+      // Recomputing it later would silently restate closed periods.
+      const costRows = await tx`
+        select fn_moving_average_cost(${companyId}, ${line.itemId}) as cost,
+               fn_qty_on_hand(${companyId}, ${line.itemId}, ${locationId}) as on_hand`;
+
+      const unitCost = Number(costRows[0].cost);
+      const onHand = Number(costRows[0].on_hand);
+
+      if (onHand < line.qty) {
+        throw new Error(
+          `Not enough ${item.code} (${item.name}) at this location — ` +
+            `${onHand} on hand, ${line.qty} requested`
+        );
+      }
+
+      const totalCost = round4(unitCost * line.qty);
+
+      await tx`
+        insert into stock_movement
+          (company_id, item_id, location_id, movement_date, qty,
+           unit_cost, total_cost, document_id)
+        values
+          (${companyId}, ${line.itemId}, ${locationId}, ${docDate}::date,
+           ${-line.qty}, ${unitCost}, ${-totalCost}, ${doc.id})`;
+
+      const inventory = await tx`
+        select fn_resolve_account_for_item(${companyId}, 'INVENTORY', ${line.itemId}) as a`;
+      journal.push({ accountId: inventory[0].a, amount: -totalCost, locationId });
+
+      if (line.focReasonId) {
+        const [foc] = await tx`select account_id from foc_reason where id = ${line.focReasonId}`;
+        journal.push({ accountId: foc.account_id, amount: totalCost, locationId });
+      } else {
+        const cogs = await tx`
+          select fn_resolve_account_for_item(${companyId}, 'COGS', ${line.itemId}) as a`;
+        journal.push({ accountId: cogs[0].a, amount: totalCost, locationId });
+
+        const revenue = await tx`
+          select fn_resolve_account_for_item(${companyId}, 'REVENUE', ${line.itemId}) as a`;
+        journal.push({ accountId: revenue[0].a, amount: -net });
+      }
+    }
+
+    if (netTotal !== 0) {
+      const ar = await tx`
+        select fn_resolve_control_account(${companyId}, 'AR_CONTROL', ${partnerId}) as a`;
+      journal.push({ accountId: ar[0].a, amount: netTotal, partnerId });
+    }
+
+    const entryId = await writeJournal(
+      tx, companyId, docDate, "SALES_INVOICE", doc.id, `${docNo} sales invoice`, journal
+    );
+
+    await tx`update document set journal_entry_id = ${entryId} where id = ${doc.id}`;
+
+    return { id: doc.id as string, docNo: docNo as string };
+  });
+}
+
+/**
+ * Purchase invoice: stock arrives at the price paid, and the supplier is owed.
+ *
+ *   Dr Inventory / Cr Accounts Payable
+ *
+ * The receipt and the bill are one event here, so this posts straight to
+ * payables rather than through GR/IR clearing.
+ */
+export async function postPurchaseInvoice(input: InvoiceInput) {
+  if (input.lines.length === 0) throw new Error("An invoice needs at least one line");
+
+  return sql.begin(async (tx) => {
+    const { companyId, partnerId, locationId, docDate, dueDate } = input;
+
+    const fyRows = await tx`select fn_fiscal_year_for(${companyId}, ${docDate}::date) as fy`;
+    const fiscalYear = fyRows[0]?.fy ?? null;
+    if (!fiscalYear) throw new Error(`No fiscal year covers ${docDate}`);
+
+    const noRows = await tx`
+      select fn_next_document_no(${companyId}, 'PURCHASE_INVOICE', ${fiscalYear}::uuid) as no`;
+    const docNo = noRows[0].no;
+
+    const netTotal = round4(input.lines.reduce((s, l) => s + l.qty * l.unitPrice, 0));
+
+    const [doc] = await tx`
+      insert into document
+        (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date, due_date,
+         partner_id, location_id, currency, exchange_rate, status,
+         net_total, tax_total, gross_total, memo, posted_at)
+      values
+        (${companyId}, 'PURCHASE_INVOICE', ${docNo}, ${fiscalYear}, ${docDate}::date,
+         ${docDate}::date, ${dueDate}, ${partnerId}, ${locationId}, 'MMK', 1, 'POSTED',
+         ${netTotal}, 0, ${netTotal}, ${input.memo ?? null}, now())
+      returning id`;
+
+    const journal: JournalLine[] = [];
+    let lineNo = 0;
+
+    for (const line of input.lines) {
+      lineNo++;
+
+      const [item] = await tx`
+        select id, code, is_stocked, base_uom_id from item where id = ${line.itemId}`;
+      if (!item) throw new Error("Item not found");
+
+      const net = round4(line.qty * line.unitPrice);
+
+      await tx`
+        insert into document_line
+          (company_id, document_id, line_no, item_id, location_id,
+           entered_qty, entered_uom_id, base_qty, unit_price,
+           net_amount, tax_amount, gross_amount)
+        values
+          (${companyId}, ${doc.id}, ${lineNo}, ${line.itemId}, ${locationId},
+           ${line.qty}, ${item.base_uom_id}, ${line.qty}, ${line.unitPrice},
+           ${net}, 0, ${net})`;
+
+      if (item.is_stocked) {
+        await tx`
+          insert into stock_movement
+            (company_id, item_id, location_id, movement_date, qty,
+             unit_cost, total_cost, document_id)
+          values
+            (${companyId}, ${line.itemId}, ${locationId}, ${docDate}::date,
+             ${line.qty}, ${line.unitPrice}, ${net}, ${doc.id})`;
+
+        const inventory = await tx`
+          select fn_resolve_account_for_item(${companyId}, 'INVENTORY', ${line.itemId}) as a`;
+        journal.push({ accountId: inventory[0].a, amount: net, locationId });
+      } else {
+        // A service or charge line goes straight to expense via its item group.
+        const cogs = await tx`
+          select fn_resolve_account_for_item(${companyId}, 'COGS', ${line.itemId}) as a`;
+        journal.push({ accountId: cogs[0].a, amount: net, locationId });
+      }
+    }
+
+    const ap = await tx`
+      select fn_resolve_control_account(${companyId}, 'AP_CONTROL', ${partnerId}) as a`;
+    journal.push({ accountId: ap[0].a, amount: -netTotal, partnerId });
+
+    const entryId = await writeJournal(
+      tx, companyId, docDate, "PURCHASE_INVOICE", doc.id, `${docNo} purchase invoice`, journal
+    );
+
+    await tx`update document set journal_entry_id = ${entryId} where id = ${doc.id}`;
+
+    return { id: doc.id as string, docNo: docNo as string };
+  });
+}
