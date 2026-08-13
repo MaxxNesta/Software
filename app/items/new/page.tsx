@@ -2,8 +2,32 @@ import Link from "next/link";
 import { createItem, getFormData } from "@/lib/actions";
 import { SimpleForm } from "@/components/simple-form";
 
+type Group = { id: string; code: string; name: string; parent_id: string | null };
+
+/** Full ancestry, so two same-named categories under different parents are distinguishable. */
+function pathOf(groups: Group[], g: Group): string {
+  const parts = [g.name];
+  let cur = g;
+  while (cur.parent_id) {
+    const parent = groups.find((x) => x.id === cur.parent_id);
+    if (!parent) break;
+    parts.unshift(parent.name);
+    cur = parent;
+  }
+  return parts.join(" → ");
+}
+
+/** Depth-first, so the dropdown reads in tree order rather than by code. */
+function ordered(groups: Group[], parentId: string | null = null): Group[] {
+  return groups
+    .filter((g) => g.parent_id === parentId)
+    .flatMap((g) => [g, ...ordered(groups, g.id)]);
+}
+
 export default async function NewItem() {
   const { groups, uoms } = await getFormData();
+  const all = groups as unknown as Group[];
+  const tree = ordered(all);
 
   if (groups.length === 0) {
     return (
@@ -59,13 +83,16 @@ export default async function NewItem() {
                 <label htmlFor="item_group_id">Category</label>
                 <select id="item_group_id" name="item_group_id" required defaultValue="">
                   <option value="">Choose…</option>
-                  {groups.map((g: any) => (
+                  {tree.map((g) => (
                     <option key={g.id} value={g.id}>
-                      {g.parent_name ? `${g.parent_name} → ${g.name}` : g.name} ({g.code})
+                      {pathOf(all, g)} ({g.code})
                     </option>
                   ))}
                 </select>
-                <span className="hint">Drives which GL accounts this item posts to</span>
+                <span className="hint">
+                  Pick the deepest one that fits. Posting rules set on a parent
+                  cover every category beneath it.
+                </span>
               </div>
               <div className="field">
                 <label htmlFor="base_uom_id">Base unit</label>
