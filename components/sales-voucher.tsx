@@ -7,7 +7,12 @@ import { ItemPicker } from "./item-picker";
 type Item = PickerItem;
 type Node = { id: string; code: string; segment: string; name: string; parent_id: string | null };
 type Uom = { id: string; code: string; name: string };
-type Customer = { id: string; code: string; name: string; payment_terms_days: number };
+type Customer = {
+  id: string; code: string; name: string;
+  payment_terms_days: number; price_level_id: string | null;
+};
+type ItemPrice = { item_id: string; price_level_id: string; price: string };
+type PriceLevel = { id: string; code: string; name: string; sort_order: number };
 type Location = { id: string; code: string; name: string };
 type Salesman = { id: string; code: string; name: string; name_my: string | null; commission_pct: string };
 type CashAccount = { id: string; code: string; name: string };
@@ -39,6 +44,7 @@ function addDays(iso: string, days: number) {
 export function SalesVoucher({
   action, customers, items: initialItems, locations, salesmen, cashAccounts, promotions,
   focReasons, openInvoices, nextInvoiceNo, today, categories, uoms,
+  itemPrices, priceLevels,
 }: {
   action: (prev: unknown, fd: FormData) => Promise<ActionResult>;
   customers: Customer[];
@@ -50,6 +56,8 @@ export function SalesVoucher({
   cashAccounts: CashAccount[];
   promotions: Promotion[];
   focReasons: FocReason[];
+  itemPrices: ItemPrice[];
+  priceLevels: PriceLevel[];
   openInvoices: OpenInvoice[];
   nextInvoiceNo: string;
   today: string;
@@ -75,22 +83,53 @@ export function SalesVoucher({
 
   const byId = (id: string) => items.find((i) => i.id === id);
 
+  const customer = customers.find((c) => c.id === customerId);
+  const defaultLevelId = priceLevels[0]?.id ?? null;
+  const activeLevelId = customer?.price_level_id ?? defaultLevelId;
+  const activeLevel = priceLevels.find((l) => l.id === activeLevelId);
+
+  /**
+   * Master data supplies the suggestion; the line stores what was actually
+   * charged. Changing the master price later must not restate old invoices,
+   * which is why the price is copied onto the line rather than looked up.
+   */
+  function priceFor(itemId: string): number {
+    const atLevel = itemPrices.find(
+      (p) => p.item_id === itemId && p.price_level_id === activeLevelId
+    );
+    if (atLevel) return Number(atLevel.price);
+    const anyLevel = itemPrices.find((p) => p.item_id === itemId);
+    return anyLevel ? Number(anyLevel.price) : 0;
+  }
+
   const setLine = (key: number, patch: Partial<Line>) =>
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
   function pickItem(key: number, itemId: string) {
-    const item = byId(itemId);
-    const p = Number(item?.sale_price ?? 0);
+    const p = priceFor(itemId);
     setLine(key, { itemId, unitPrice: p > 0 ? String(p) : "" });
   }
 
   function pickCustomer(id: string) {
     setCustomerId(id);
     const c = customers.find((x) => x.id === id);
-    if (c) {
-      setDueDate(c.payment_terms_days > 0 ? addDays(docDate, c.payment_terms_days) : "");
-      setPaymentType(c.payment_terms_days > 0 ? "CREDIT" : "CASH");
-    }
+    if (!c) return;
+
+    setDueDate(c.payment_terms_days > 0 ? addDays(docDate, c.payment_terms_days) : "");
+    setPaymentType(c.payment_terms_days > 0 ? "CREDIT" : "CASH");
+
+    // Re-quote lines already entered, since the level may differ. A price the
+    // user typed over is left alone.
+    const level = c.price_level_id ?? defaultLevelId;
+    setLines((ls) =>
+      ls.map((l) => {
+        if (!l.itemId) return l;
+        const wasSuggested = Number(l.unitPrice) === priceFor(l.itemId) || !l.unitPrice;
+        if (!wasSuggested) return l;
+        const at = itemPrices.find((p) => p.item_id === l.itemId && p.price_level_id === level);
+        return { ...l, unitPrice: at ? String(Number(at.price)) : l.unitPrice };
+      })
+    );
   }
 
   const addLine = () =>
@@ -182,6 +221,11 @@ export function SalesVoucher({
           <h2>Voucher</h2>
           <span className="actions">
             <span className="pill">Sales invoice</span>
+            {activeLevel && (
+              <span className="pill ok" title="Prices suggested at this level">
+                {activeLevel.name}
+              </span>
+            )}
             <span className="m" style={{ color: "var(--muted)" }}>No. {nextInvoiceNo}</span>
           </span>
         </div>

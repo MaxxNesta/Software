@@ -24,7 +24,10 @@ export default async function Receivables() {
         <div className="card">
           <div className="card-head">
             <h2>Open invoices</h2>
-            <span className="page-sub">{items.length} outstanding</span>
+            <span className="actions">
+              <span className="page-sub">{items.length} outstanding</span>
+              <Link href="/receivables/receive"><button type="button">Receive payment</button></Link>
+            </span>
           </div>
           <div className="tablewrap">
             <table>

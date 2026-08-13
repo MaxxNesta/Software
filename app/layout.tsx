@@ -40,13 +40,15 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <span className="navlabel">Entry</span>
               <NavLink href="/sales/new">New sales invoice</NavLink>
               <NavLink href="/purchases/new">New purchase invoice</NavLink>
+              <NavLink href="/receivables/receive">Receive payment</NavLink>
+              <NavLink href="/payables/pay">Pay supplier</NavLink>
             </div>
 
             <div className="navgroup">
               <span className="navlabel">Transactions</span>
               <NavLink href="/documents">All documents</NavLink>
-              <NavLink href="/receivables">Receivables</NavLink>
-              <NavLink href="/payables">Payables</NavLink>
+              <NavLink href="/receivables" exact>Receivables</NavLink>
+              <NavLink href="/payables" exact>Payables</NavLink>
             </div>
 
             <div className="navgroup">

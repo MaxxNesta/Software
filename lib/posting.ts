@@ -395,3 +395,125 @@ export async function postPurchaseInvoice(input: InvoiceInput) {
     return { id: doc.id as string, docNo: docNo as string };
   });
 }
+
+// =========================================================================
+// Settling invoices
+// =========================================================================
+//
+// Paying does not touch the invoice. The invoice is a record of what was
+// agreed and never changes; a payment is its own document, allocated against
+// the invoices it settles. Outstanding is then derived, which is what makes
+// "partially paid" answerable and aging trustworthy.
+
+export type Allocation = { invoiceId: string; amount: number };
+
+export type SettlementInput = {
+  companyId: string;
+  partnerId: string;
+  docDate: string;
+  cashAccountId: string;
+  allocations: Allocation[];
+  memo?: string | null;
+  reference?: string | null;
+};
+
+async function postSettlement(
+  input: SettlementInput,
+  kind: "SUPPLIER_PAYMENT" | "CUSTOMER_RECEIPT"
+) {
+  const lines = input.allocations.filter((a) => a.amount > 0);
+  if (lines.length === 0) throw new Error("Enter an amount against at least one invoice");
+  if (!input.cashAccountId) throw new Error("Choose which cash or bank account to use");
+
+  const total = round4(lines.reduce((s, a) => s + a.amount, 0));
+  const isPayment = kind === "SUPPLIER_PAYMENT";
+  const controlRole = isPayment ? "AP_CONTROL" : "AR_CONTROL";
+
+  return sql.begin(async (tx) => {
+    const { companyId, partnerId, docDate } = input;
+
+    const fyRows = await tx`select fn_fiscal_year_for(${companyId}, ${docDate}::date) as fy`;
+    const fiscalYear = fyRows[0]?.fy ?? null;
+    if (!fiscalYear) throw new Error(`No fiscal year covers ${docDate}`);
+
+    // Check each invoice still owes what is being applied. Two people paying
+    // the same bill at once would otherwise both succeed.
+    for (const a of lines) {
+      const [inv] = await tx`
+        select d.doc_no, d.partner_id, d.gross_total,
+               coalesce((select sum(amount) from payment_allocation
+                          where invoice_id = d.id), 0) as allocated
+          from document d
+         where d.id = ${a.invoiceId} and d.company_id = ${companyId}
+         for update of d`;
+
+      if (!inv) throw new Error("That invoice no longer exists");
+      if (inv.partner_id !== partnerId) {
+        throw new Error(`Invoice ${inv.doc_no} belongs to a different partner`);
+      }
+
+      const outstanding = round4(Number(inv.gross_total) - Number(inv.allocated));
+      if (a.amount > outstanding) {
+        throw new Error(
+          `${inv.doc_no} only has ${outstanding} outstanding; ${a.amount} was applied`
+        );
+      }
+    }
+
+    const noRows = await tx`
+      select fn_next_document_no(${companyId}, ${kind}, ${fiscalYear}::uuid) as no`;
+    const docNo = noRows[0].no;
+
+    const [doc] = await tx`
+      insert into document
+        (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date,
+         partner_id, currency, exchange_rate, status,
+         net_total, tax_total, gross_total, memo, reference, payment_type, posted_at)
+      values
+        (${companyId}, ${kind}, ${docNo}, ${fiscalYear}, ${docDate}::date, ${docDate}::date,
+         ${partnerId}, 'MMK', 1, 'POSTED',
+         ${total}, 0, ${total}, ${input.memo ?? null}, ${input.reference ?? null},
+         'CASH', now())
+      returning id`;
+
+    for (const a of lines) {
+      await tx`
+        insert into payment_allocation
+          (company_id, payment_id, invoice_id, amount, base_amount)
+        values (${companyId}, ${doc.id}, ${a.invoiceId}, ${a.amount}, ${a.amount})`;
+    }
+
+    const control = await tx`
+      select fn_resolve_control_account(${companyId}, ${controlRole}, ${partnerId}) as a`;
+
+    const journal: JournalLine[] = isPayment
+      ? [
+          { accountId: control[0].a, amount: total, partnerId },
+          { accountId: input.cashAccountId, amount: -total },
+        ]
+      : [
+          { accountId: input.cashAccountId, amount: total },
+          { accountId: control[0].a, amount: -total, partnerId },
+        ];
+
+    const entryId = await writeJournal(
+      tx, companyId, docDate, kind, doc.id,
+      `${docNo} settling ${lines.length} invoice${lines.length === 1 ? "" : "s"}`,
+      journal
+    );
+
+    await tx`update document set journal_entry_id = ${entryId} where id = ${doc.id}`;
+
+    return { id: doc.id as string, docNo: docNo as string, total };
+  });
+}
+
+/** Dr Accounts Payable / Cr Bank. */
+export async function postSupplierPayment(input: SettlementInput) {
+  return postSettlement(input, "SUPPLIER_PAYMENT");
+}
+
+/** Dr Bank / Cr Accounts Receivable. */
+export async function postCustomerReceipt(input: SettlementInput) {
+  return postSettlement(input, "CUSTOMER_RECEIPT");
+}

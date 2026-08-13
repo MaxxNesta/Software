@@ -24,6 +24,20 @@ const n = (v) => Number(v ?? 0);
 
 try {
   const [co] = await sql`select id from company limit 1`;
+
+  // Start from a known state. These tests post real documents, and journal
+  // entries and stock movements refuse row deletion by design, so anything a
+  // previous run left has to go through TRUNCATE.
+  await sql.unsafe(`truncate table payment_allocation, stock_movement, document_line,
+    document, journal_line, journal_entry restart identity cascade`);
+  await sql`update number_series set next_value = 1`;
+  // Promotions reference categories, so they have to go first.
+  await sql`delete from promotion`;
+  await sql`delete from account_determination where item_group_id is not null`;
+  await sql`delete from item`;
+  await sql`delete from item_group`;
+  await sql`delete from business_partner`;
+
   const [loc] = await sql`select id from location where is_stock_location order by code limit 1`;
   const [uom] = await sql`select id from uom order by code limit 1`;
   const today = new Date().toISOString().slice(0, 10);
@@ -32,16 +46,16 @@ try {
 
   // Parent category, then a child under it — the depth the UI now allows.
   const [parent] = await sql`
-    insert into item_group (company_id, code, name) values (${co.id}, 'TEST', 'Test Category')
-    returning id`;
+    insert into item_group (company_id, segment, code, name)
+    values (${co.id}, 'TEST', 'x', 'Test Category') returning id`;
   const [child] = await sql`
-    insert into item_group (company_id, parent_id, code, name)
-    values (${co.id}, ${parent.id}, 'TEST-SUB', 'Test Sub Category') returning id`;
+    insert into item_group (company_id, parent_id, segment, code, name)
+    values (${co.id}, ${parent.id}, '-SUB', 'x', 'Test Sub Category') returning id`;
   check("nested category created", Boolean(child.id));
 
   const [item] = await sql`
-    insert into item (company_id, item_group_id, code, name, base_uom_id)
-    values (${co.id}, ${child.id}, 'TEST-001', 'Test Product', ${uom.id}) returning id`;
+    insert into item (company_id, item_group_id, serial, code, name, base_uom_id)
+    values (${co.id}, ${child.id}, '001', 'x', 'Test Product', ${uom.id}) returning id`;
 
   const [cust] = await sql`
     insert into business_partner (company_id, code, name, is_customer, payment_terms_days)

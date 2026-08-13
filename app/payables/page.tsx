@@ -21,7 +21,10 @@ export default async function Payables() {
         <div className="card">
           <div className="card-head">
             <h2>Open bills</h2>
-            <span className="page-sub">{items.length} outstanding</span>
+            <span className="actions">
+              <span className="page-sub">{items.length} outstanding</span>
+              <Link href="/payables/pay"><button type="button">Pay supplier</button></Link>
+            </span>
           </div>
           <div className="tablewrap">
             <table>

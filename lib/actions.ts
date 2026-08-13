@@ -3,7 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { sql } from "./db";
-import { postSalesInvoice, postPurchaseInvoice, type InvoiceLine } from "./posting";
+import {
+  postSalesInvoice, postPurchaseInvoice,
+  postSupplierPayment, postCustomerReceipt,
+  type InvoiceLine, type Allocation,
+} from "./posting";
 
 export type ActionResult = { error: string } | { ok: true };
 
@@ -448,6 +452,115 @@ export async function createPurchaseInvoice(_prev: unknown, fd: FormData): Promi
   redirect(`/documents/${docId}`);
 }
 
+// ------------------------------------------------------------- settlement --
+
+function parseAllocations(fd: FormData): Allocation[] {
+  const raw = String(fd.get("allocations") ?? "[]");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("Could not read the allocations");
+  }
+  if (!Array.isArray(parsed)) throw new Error("Could not read the allocations");
+
+  return parsed
+    .map((a: any) => ({ invoiceId: String(a.invoiceId ?? ""), amount: Number(a.amount) }))
+    .filter((a) => a.invoiceId && a.amount > 0);
+}
+
+async function settle(
+  fd: FormData,
+  kind: "pay" | "receive"
+): Promise<{ error: string } | { id: string }> {
+  const co = await companyId();
+  const allocations = parseAllocations(fd);
+
+  if (allocations.length === 0) {
+    return { error: "Enter an amount against at least one invoice" };
+  }
+  if (!str(fd, "partner_id")) {
+    return { error: kind === "pay" ? "Choose a supplier" : "Choose a customer" };
+  }
+  if (!str(fd, "cash_account_id")) {
+    return { error: "Choose which cash or bank account to use" };
+  }
+
+  const input = {
+    companyId: co,
+    partnerId: str(fd, "partner_id"),
+    docDate: str(fd, "doc_date"),
+    cashAccountId: str(fd, "cash_account_id"),
+    reference: str(fd, "reference") || null,
+    memo: str(fd, "memo") || null,
+    allocations,
+  };
+
+  const result = kind === "pay"
+    ? await postSupplierPayment(input)
+    : await postCustomerReceipt(input);
+
+  return { id: result.id };
+}
+
+export async function createSupplierPayment(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let docId: string;
+  try {
+    const r = await settle(fd, "pay");
+    if ("error" in r) return { error: r.error };
+    docId = r.id;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/");
+  revalidatePath("/payables");
+  revalidatePath("/documents");
+  revalidatePath("/ledger");
+  redirect(`/documents/${docId}`);
+}
+
+export async function createCustomerReceipt(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let docId: string;
+  try {
+    const r = await settle(fd, "receive");
+    if ("error" in r) return { error: r.error };
+    docId = r.id;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/");
+  revalidatePath("/receivables");
+  revalidatePath("/documents");
+  revalidatePath("/ledger");
+  redirect(`/documents/${docId}`);
+}
+
+/** Open invoices for one partner, for the settlement screens. */
+export async function getSettlementData(kind: "pay" | "receive") {
+  const co = await companyId();
+  const docType = kind === "pay" ? "PURCHASE_INVOICE" : "SALES_INVOICE";
+  const role = kind === "pay" ? "is_supplier" : "is_customer";
+
+  const [partners, invoices, cashAccounts] = await Promise.all([
+    kind === "pay"
+      ? sql`select id, code, name from business_partner
+             where company_id = ${co} and is_supplier and is_active order by code`
+      : sql`select id, code, name from business_partner
+             where company_id = ${co} and is_customer and is_active order by code`,
+    sql`select document_id, doc_no, partner_id, posting_date, due_date,
+                gross_total, paid, outstanding, payment_status, days_overdue
+           from v_invoice_status
+          where company_id = ${co} and doc_type = ${docType} and outstanding <> 0
+          order by due_date nulls last, posting_date`,
+    sql`select id, code, name from account
+         where company_id = ${co} and is_cash_account and is_active order by code`,
+  ]);
+
+  return { partners, invoices, cashAccounts, role };
+}
+
 // ------------------------------------------------------------- form lookups --
 
 export async function getFormData() {
@@ -455,20 +568,20 @@ export async function getFormData() {
 
   const [
     customers, suppliers, items, locations, groups, uoms,
-    salesmen, promotions, cashAccounts, focReasons, openInvoices, nextNo,
+    salesmen, promotions, cashAccounts, focReasons, itemPrices, priceLevels,
+    openInvoices, nextNo,
   ] = await Promise.all([
-    sql`select id, code, name, payment_terms_days from business_partner
+    sql`select id, code, name, payment_terms_days, price_level_id from business_partner
          where company_id = ${co} and is_customer and is_active order by code`,
     sql`select id, code, name, payment_terms_days from business_partner
          where company_id = ${co} and is_supplier and is_active order by code`,
     sql`select i.id, i.code, i.name, i.is_stocked, i.item_group_id,
                 coalesce(s.qty, 0) as on_hand,
-                coalesce(p.price, 0) as sale_price,
-                coalesce(fn_moving_average_cost(${co}, i.id), 0) as avg_cost
+                coalesce(fn_moving_average_cost(${co}, i.id), 0) as avg_cost,
+                0 as sale_price
            from item i
            left join (select item_id, sum(qty_on_hand) as qty
                         from v_stock_on_hand group by item_id) s on s.item_id = i.id
-           left join item_price p on p.item_id = i.id
           where i.company_id = ${co} and i.is_active
           order by i.code`,
     sql`select id, code, name from location
@@ -498,6 +611,15 @@ export async function getFormData() {
 
     sql`select id, code, name from foc_reason where company_id = ${co} order by code`,
 
+    // Every price at every level. The voucher picks the one matching the
+    // customer, so a wholesale buyer is not quoted the retail price.
+    sql`select ip.item_id, ip.price_level_id, ip.price
+           from item_price ip
+          where ip.company_id = ${co}`,
+
+    sql`select id, code, name, sort_order from price_level
+         where company_id = ${co} order by sort_order`,
+
     sql`select document_id, doc_no, partner_id, posting_date, due_date,
                 gross_total, outstanding, aging_bucket
            from v_open_item
@@ -516,7 +638,7 @@ export async function getFormData() {
 
   return {
     customers, suppliers, items, locations, groups, uoms,
-    salesmen, promotions, cashAccounts, focReasons, openInvoices,
+    salesmen, promotions, cashAccounts, focReasons, itemPrices, priceLevels, openInvoices,
     nextInvoiceNo: (nextNo[0]?.no as string) ?? "SI-000001",
   };
 }

@@ -58,14 +58,15 @@ insert into uom (id, company_id, code, name)
 values ('66666666-6666-6666-6666-666666666666',
         '11111111-1111-1111-1111-111111111111', 'PCS', 'Pieces');
 
-insert into item_group (id, company_id, code, name)
+-- Codes compose from segment; `code` is overwritten by trigger.
+insert into item_group (id, company_id, segment, code, name)
 values ('77777777-7777-7777-7777-777777777777',
-        '11111111-1111-1111-1111-111111111111', 'BEV', 'Beverages');
+        '11111111-1111-1111-1111-111111111111', '01', 'x', 'Beverages');
 
-insert into item (id, company_id, item_group_id, code, name, base_uom_id)
+insert into item (id, company_id, item_group_id, serial, code, name, base_uom_id)
 values ('88888888-8888-8888-8888-888888888888',
         '11111111-1111-1111-1111-111111111111',
-        '77777777-7777-7777-7777-777777777777', 'ITEM01', 'Test Item',
+        '77777777-7777-7777-7777-777777777777', '001', 'x', 'Test Item',
         '66666666-6666-6666-6666-666666666666');
 
 insert into business_partner (id, company_id, code, name, is_customer)

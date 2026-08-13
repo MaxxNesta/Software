@@ -168,24 +168,28 @@ values (co, mdy, 'MDY-WH', 'Mandalay Warehouse', true) returning id into mdy_wh;
 insert into uom (company_id, code, name) values (co, 'PCS', 'Pieces') returning id into u_pcs;
 insert into uom (company_id, code, name) values (co, 'CTN', 'Carton')  returning id into u_ctn;
 
-insert into item_group (company_id, code, name, name_my) values (co, 'BEV', 'Beverages', 'အအေးများ') returning id into g_bev;
-insert into item_group (company_id, code, name, name_my) values (co, 'SNK', 'Snacks', 'မုန့်များ')    returning id into g_snk;
-insert into item_group (company_id, code, name, name_my) values (co, 'HOU', 'Household', 'အိမ်သုံး')  returning id into g_hou;
+-- Segments compose into the full code: 01, 02, 03 at the top level.
+insert into item_group (company_id, segment, code, name, name_my)
+values (co, '01', 'x', 'Beverages', 'အအေးများ') returning id into g_bev;
+insert into item_group (company_id, segment, code, name, name_my)
+values (co, '02', 'x', 'Snacks', 'မုန့်များ') returning id into g_snk;
+insert into item_group (company_id, segment, code, name, name_my)
+values (co, '03', 'x', 'Household', 'အိမ်သုံး') returning id into g_hou;
 
-insert into item (company_id, item_group_id, code, name, name_my, base_uom_id) values
-    (co, g_bev, 'BEV-001', 'Cola 330ml Can',        'ကိုလာ ၃၃၀ml', u_pcs) returning id into i_cola;
-insert into item (company_id, item_group_id, code, name, base_uom_id) values
-    (co, g_bev, 'BEV-002', 'Orange Juice 1L',        u_pcs) returning id into i_juice;
-insert into item (company_id, item_group_id, code, name, base_uom_id) values
-    (co, g_bev, 'BEV-003', 'Drinking Water 500ml',   u_pcs) returning id into i_water;
-insert into item (company_id, item_group_id, code, name, base_uom_id) values
-    (co, g_snk, 'SNK-001', 'Potato Chips 45g',       u_pcs) returning id into i_chips;
-insert into item (company_id, item_group_id, code, name, base_uom_id) values
-    (co, g_snk, 'SNK-002', 'Peanut Snack 60g',       u_pcs) returning id into i_peanut;
-insert into item (company_id, item_group_id, code, name, base_uom_id) values
-    (co, g_hou, 'HOU-001', 'Laundry Detergent 1kg',  u_pcs) returning id into i_deterg;
-insert into item (company_id, item_group_id, code, name, base_uom_id) values
-    (co, g_hou, 'HOU-002', 'Dish Soap 500ml',        u_pcs) returning id into i_soap;
+insert into item (company_id, item_group_id, serial, code, name, name_my, base_uom_id) values
+    (co, g_bev, '001', 'x', 'Cola 330ml Can', 'ကိုလာ ၃၃၀ml', u_pcs) returning id into i_cola;
+insert into item (company_id, item_group_id, serial, code, name, base_uom_id) values
+    (co, g_bev, '002', 'x', 'Orange Juice 1L', u_pcs) returning id into i_juice;
+insert into item (company_id, item_group_id, serial, code, name, base_uom_id) values
+    (co, g_bev, '003', 'x', 'Drinking Water 500ml', u_pcs) returning id into i_water;
+insert into item (company_id, item_group_id, serial, code, name, base_uom_id) values
+    (co, g_snk, '001', 'x', 'Potato Chips 45g', u_pcs) returning id into i_chips;
+insert into item (company_id, item_group_id, serial, code, name, base_uom_id) values
+    (co, g_snk, '002', 'x', 'Peanut Snack 60g', u_pcs) returning id into i_peanut;
+insert into item (company_id, item_group_id, serial, code, name, base_uom_id) values
+    (co, g_hou, '001', 'x', 'Laundry Detergent 1kg', u_pcs) returning id into i_deterg;
+insert into item (company_id, item_group_id, serial, code, name, base_uom_id) values
+    (co, g_hou, '002', 'x', 'Dish Soap 500ml', u_pcs) returning id into i_soap;
 
 -- Carton conversions: the three-tier unit hierarchy in practice.
 insert into item_uom (company_id, item_id, uom_id, factor) values

@@ -37,14 +37,51 @@ const n = (v) => Number(v ?? 0);
 
 try {
   const [co] = await sql`select id, name from company order by created_at limit 1`;
-  const [cust] = await sql`
-    select id, code from business_partner where company_id = ${co.id} and is_customer order by code limit 1`;
-  const [supp] = await sql`
-    select id, code from business_partner where company_id = ${co.id} and is_supplier order by code limit 1`;
+
+  // Start from a known state. These tests post real documents, and journal
+  // entries and stock movements refuse row deletion by design, so anything a
+  // previous run left has to go through TRUNCATE.
+  await sql.unsafe(`truncate table payment_allocation, stock_movement, document_line,
+    document, journal_line, journal_entry restart identity cascade`);
+  await sql`update number_series set next_value = 1`;
+
   const [loc] = await sql`
     select id, code from location where company_id = ${co.id} and is_stock_location order by code limit 1`;
-  const [item] = await sql`
+
+  // Stand up whatever is missing, so this runs against an empty database as
+  // well as a seeded one.
+  let [cust] = await sql`
+    select id, code from business_partner where company_id = ${co.id} and is_customer order by code limit 1`;
+  if (!cust) {
+    [cust] = await sql`
+      insert into business_partner (company_id, code, name, is_customer, payment_terms_days)
+      values (${co.id}, 'PT-C', 'Posting Test Customer', true, 30) returning id, code`;
+  }
+
+  let [supp] = await sql`
+    select id, code from business_partner where company_id = ${co.id} and is_supplier order by code limit 1`;
+  if (!supp) {
+    [supp] = await sql`
+      insert into business_partner (company_id, code, name, is_supplier)
+      values (${co.id}, 'PT-S', 'Posting Test Supplier', true) returning id, code`;
+  }
+
+  let [item] = await sql`
     select id, code, name from item where company_id = ${co.id} and is_stocked order by code limit 1`;
+  if (!item) {
+    let [grp] = await sql`
+      select id from item_group where company_id = ${co.id} order by code limit 1`;
+    if (!grp) {
+      [grp] = await sql`
+        insert into item_group (company_id, segment, code, name)
+        values (${co.id}, 'PT', 'x', 'Posting Test') returning id`;
+    }
+    const [uom] = await sql`select id from uom where company_id = ${co.id} order by code limit 1`;
+    [item] = await sql`
+      insert into item (company_id, item_group_id, serial, code, name, base_uom_id)
+      values (${co.id}, ${grp.id}, '001', 'x', 'Posting Test Item', ${uom.id})
+      returning id, code, name`;
+  }
 
   console.log(`\n  ${co.name}  ·  item ${item.code}  ·  ${loc.code}\n`);
 
@@ -138,8 +175,13 @@ try {
 
   // ---- Cash sale: part payment taken at the counter ---------------------
 
-  const [salesman] = await sql`
+  let [salesman] = await sql`
     select id, code from salesman where company_id = ${co.id} order by code limit 1`;
+  if (!salesman) {
+    [salesman] = await sql`
+      insert into salesman (company_id, code, name) values (${co.id}, 'PT-SM', 'Test Salesman')
+      returning id, code`;
+  }
   const [cashAcct] = await sql`
     select id, code from account where company_id = ${co.id} and is_cash_account order by code limit 1`;
 
@@ -192,8 +234,15 @@ try {
   // promotion expense rather than COGS, so a giveaway shows up as a
   // promotional cost instead of silently eroding gross margin.
 
-  const [foc] = await sql`
+  let [foc] = await sql`
     select id from foc_reason where company_id = ${co.id} and code = 'PROMOTION'`;
+  if (!foc) {
+    const [acct] = await sql`
+      select id from account where company_id = ${co.id} and code = '6100'`;
+    [foc] = await sql`
+      insert into foc_reason (company_id, code, name, account_id)
+      values (${co.id}, 'PROMOTION', 'Promotional giveaway', ${acct.id}) returning id`;
+  }
 
   const focBefore = n(
     (await sql`select fn_qty_on_hand(${co.id}, ${item.id}, ${loc.id}) as q`)[0].q

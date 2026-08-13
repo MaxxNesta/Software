@@ -28,8 +28,8 @@ async function insertAbove(co, targetId, code, name) {
   return sql.begin(async (tx) => {
     const [target] = await tx`select id, parent_id from item_group where id = ${targetId}`;
     const [created] = await tx`
-      insert into item_group (company_id, parent_id, code, name)
-      values (${co}, ${target.parent_id}, ${code}, ${name}) returning id`;
+      insert into item_group (company_id, parent_id, segment, code, name)
+      values (${co}, ${target.parent_id}, ${code}, ${code}, ${name}) returning id`;
     await tx`update item_group set parent_id = ${created.id} where id = ${target.id}`;
     return created.id;
   });
@@ -63,17 +63,17 @@ const pathOf = async (id) => {
 
 try {
   const [co] = await sql`select id from company limit 1`;
-  await sql`delete from item_group where code like 'TT-%'`;
+  await sql`delete from item_group where segment like 'TT-%'`;
 
   const [bev] = await sql`
-    insert into item_group (company_id, code, name) values (${co.id}, 'TT-BEV', 'Beverages')
-    returning id`;
+    insert into item_group (company_id, segment, code, name)
+    values (${co.id}, 'TT-BEV', 'x', 'Beverages') returning id`;
   const [soft] = await sql`
-    insert into item_group (company_id, parent_id, code, name)
-    values (${co.id}, ${bev.id}, 'TT-SOFT', 'Soft drinks') returning id`;
+    insert into item_group (company_id, parent_id, segment, code, name)
+    values (${co.id}, ${bev.id}, 'TT-SOFT', 'x', 'Soft drinks') returning id`;
   const [cola] = await sql`
-    insert into item_group (company_id, parent_id, code, name)
-    values (${co.id}, ${soft.id}, 'TT-COLA', 'Cola') returning id`;
+    insert into item_group (company_id, parent_id, segment, code, name)
+    values (${co.id}, ${soft.id}, 'TT-COLA', 'x', 'Cola') returning id`;
 
   console.log(`\n  built: ${await pathOf(cola.id)}\n`);
   check("starts three deep", (await pathOf(cola.id)) === "Beverages > Soft drinks > Cola");
@@ -124,8 +124,8 @@ try {
        and not exists (select 1 from item_group p where p.id = g.parent_id)`;
   check("no orphaned categories", orphans[0].n === 0);
 
-  await sql`delete from item_group where code like 'TT-%'`;
-  const left = await sql`select count(*)::int as n from item_group where code like 'TT-%'`;
+  await sql`delete from item_group where segment like 'TT-%'`;
+  const left = await sql`select count(*)::int as n from item_group where segment like 'TT-%'`;
   check("test rows cleaned up", left[0].n === 0);
 
   console.log(bad === 0 ? "\n  tree restructuring is sound\n" : `\n  ${bad} failed\n`);
