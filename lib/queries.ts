@@ -169,7 +169,8 @@ export async function getPartners(companyId: string) {
 
 export async function getItems(companyId: string) {
   return sql`
-    select i.id, i.code, i.name, i.name_my, g.name as group_name,
+    select i.id, i.code, i.name, i.name_my, i.item_group_id, i.is_stocked,
+           g.name as group_name,
            u.code as uom_code,
            coalesce(s.qty, 0) as qty_on_hand, coalesce(s.val, 0) as value_on_hand,
            pr.price as sale_price

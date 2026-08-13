@@ -53,8 +53,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 
             <div className="navgroup">
               <span className="navlabel">Master data</span>
-              <NavLink href="/items" exact>Items &amp; stock</NavLink>
               <NavLink href="/items/categories">Categories</NavLink>
+              <NavLink href="/items" exact>Items &amp; stock</NavLink>
               <NavLink href="/partners">Partners</NavLink>
             </div>
           </nav>
