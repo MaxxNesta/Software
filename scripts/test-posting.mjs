@@ -186,6 +186,60 @@ try {
     select 1 from v_pending_delivery where document_id = ${cs.id}`;
   check("to-deliver appears on the warehouse worklist", pending.length === 1);
 
+  // ---- Buy 10 get 1 free ------------------------------------------------
+  // 11 units leave the warehouse. Revenue is recognised on the 10 that were
+  // paid for. The cost of all 11 leaves inventory, but the free one lands in
+  // promotion expense rather than COGS, so a giveaway shows up as a
+  // promotional cost instead of silently eroding gross margin.
+
+  const [foc] = await sql`
+    select id from foc_reason where company_id = ${co.id} and code = 'PROMOTION'`;
+
+  const focBefore = n(
+    (await sql`select fn_qty_on_hand(${co.id}, ${item.id}, ${loc.id}) as q`)[0].q
+  );
+  const focCost = n(
+    (await sql`select fn_moving_average_cost(${co.id}, ${item.id}) as c`)[0].c
+  );
+
+  const promo = await postSalesInvoice({
+    companyId: co.id, partnerId: cust.id, locationId: loc.id,
+    docDate: today, dueDate: null, memo: "buy 10 get 1",
+    lines: [
+      { itemId: item.id, qty: 10, unitPrice: 1000 },
+      { itemId: item.id, qty: 1, unitPrice: 0, focReasonId: foc.id },
+    ],
+  });
+
+  const focAfter = n(
+    (await sql`select fn_qty_on_hand(${co.id}, ${item.id}, ${loc.id}) as q`)[0].q
+  );
+  console.log(`\n  posted ${promo.docNo}  10 sold + 1 free`);
+
+  check("11 units leave stock, not 10", focBefore - focAfter === 11,
+    `${focBefore} -> ${focAfter}`);
+
+  const pj = await sql`
+    select account_code, debit, credit from v_journal_line
+     where source_id = ${promo.id} order by line_no`;
+
+  const rev11 = pj.find((l) => l.account_code === "4100");
+  const cogs11 = pj.find((l) => l.account_code === "5100");
+  const promoExp = pj.find((l) => l.account_code === "6100");
+  const inv11 = pj.find((l) => l.account_code === "1300");
+
+  check("revenue only on the 10 paid for", n(rev11?.credit) === 10_000,
+    `${n(rev11?.credit)}`);
+  check("COGS covers 10 units", Math.abs(n(cogs11?.debit) - 10 * focCost) < 1,
+    `${n(cogs11?.debit).toFixed(2)} vs ${(10 * focCost).toFixed(2)}`);
+  check("free unit hits promotion expense, not COGS",
+    Math.abs(n(promoExp?.debit) - focCost) < 1,
+    `${n(promoExp?.debit).toFixed(2)} vs ${focCost.toFixed(2)}`);
+  check("inventory credited for all 11", Math.abs(n(inv11?.credit) - 11 * focCost) < 1,
+    `${n(inv11?.credit).toFixed(2)} vs ${(11 * focCost).toFixed(2)}`);
+  check("receivable is only the 10 sold",
+    n((await sql`select outstanding from v_open_item where document_id = ${promo.id}`)[0]?.outstanding) === 10_000);
+
   // ---- Overselling must be refused -------------------------------------
 
   let refused = false;

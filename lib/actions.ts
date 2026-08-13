@@ -240,13 +240,13 @@ export async function getFormData() {
 
   const [
     customers, suppliers, items, locations, groups, uoms,
-    salesmen, promotions, cashAccounts, openInvoices, nextNo,
+    salesmen, promotions, cashAccounts, focReasons, openInvoices, nextNo,
   ] = await Promise.all([
     sql`select id, code, name, payment_terms_days from business_partner
          where company_id = ${co} and is_customer and is_active order by code`,
     sql`select id, code, name, payment_terms_days from business_partner
          where company_id = ${co} and is_supplier and is_active order by code`,
-    sql`select i.id, i.code, i.name, i.is_stocked,
+    sql`select i.id, i.code, i.name, i.is_stocked, i.item_group_id,
                 coalesce(s.qty, 0) as on_hand,
                 coalesce(p.price, 0) as sale_price,
                 coalesce(fn_moving_average_cost(${co}, i.id), 0) as avg_cost
@@ -268,7 +268,7 @@ export async function getFormData() {
          where company_id = ${co} and is_active order by code`,
 
     sql`select p.id, p.code, p.name, p.discount_pct, p.buy_qty, p.free_qty,
-                p.valid_from, p.valid_to,
+                p.valid_from, p.valid_to, p.item_id, p.item_group_id,
                 i.code as item_code, g.name as group_name
            from promotion p
            left join item i on i.id = p.item_id
@@ -280,6 +280,8 @@ export async function getFormData() {
 
     sql`select id, code, name from account
          where company_id = ${co} and is_cash_account and is_active order by code`,
+
+    sql`select id, code, name from foc_reason where company_id = ${co} order by code`,
 
     sql`select document_id, doc_no, partner_id, posting_date, due_date,
                 gross_total, outstanding, aging_bucket
@@ -299,7 +301,7 @@ export async function getFormData() {
 
   return {
     customers, suppliers, items, locations, groups, uoms,
-    salesmen, promotions, cashAccounts, openInvoices,
+    salesmen, promotions, cashAccounts, focReasons, openInvoices,
     nextInvoiceNo: (nextNo[0]?.no as string) ?? "SI-000001",
   };
 }

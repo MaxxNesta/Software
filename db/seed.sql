@@ -233,6 +233,40 @@ values (co, 'S-002', 'Asia Snack Manufacturing', true, 30) returning id into s_s
 insert into business_partner (company_id, code, name, is_supplier, payment_terms_days)
 values (co, 'S-003', 'Yangon Household Goods', true, 45) returning id into s_hou;
 
+-- ------------------------------------------------------------- salesmen --
+
+insert into salesman (company_id, code, name, name_my, location_id, commission_pct) values
+    (co, 'SM-01', 'Ko Myat Thu',  'ကိုမြတ်သူ',  ygn_wh, 2),
+    (co, 'SM-02', 'Ma Thida Win', 'မသီတာဝင်း', ygn_wh, 2),
+    (co, 'SM-03', 'Ko Zaw Lin',   null,         mdy_wh, 1.5),
+    (co, 'SM-04', 'Counter Sale', null,         ygn_wh, 0);
+
+-- ----------------------------------------------------------- promotions --
+
+insert into promotion (company_id, code, name, discount_pct, valid_from) values
+    (co, 'PROMO-THINGYAN', 'Thingyan 5% off',   5, '2026-04-01'),
+    (co, 'PROMO-BULK',     'Bulk order 3% off', 3, '2026-04-01');
+
+insert into promotion (company_id, code, name, item_group_id, buy_qty, free_qty, valid_from)
+values (co, 'PROMO-B10G1', 'Buy 10 get 1 free', g_bev, 10, 1, '2026-04-01');
+
+-- Where counter cash can be taken.
+update account set is_cash_account = true
+ where company_id = co and code in ('1110', '1120');
+
+-- Free-of-charge reasons. Stock still leaves, but the cost lands in expense
+-- rather than COGS, so a giveaway is visible instead of quietly eroding
+-- gross margin.
+insert into foc_reason (company_id, code, name, name_my, account_id)
+select co, r.code, r.name, r.name_my, a.id
+from (values
+    ('PROMOTION', 'Promotional giveaway', 'ကြော်ငြာအတွက်', '6100'),
+    ('SAMPLE',    'Customer sample',      null,            '6100'),
+    ('OFFICE',    'Office use',           null,            '6100'),
+    ('DAMAGED',   'Damaged or expired',   null,            '5300')
+) as r(code, name, name_my, acct)
+join account a on a.company_id = co and a.code = r.acct;
+
 -- ------------------------------------------------------- numbering series --
 
 insert into number_series (company_id, document_type, fiscal_year_id, prefix, next_value)
@@ -543,9 +577,6 @@ insert into document (company_id, doc_type, doc_no, fiscal_year_id, doc_date, po
 values (co, 'DELIVERY', 'DO-000004', fy, '2026-08-09', '2026-08-09',
         c_aung, ygn_wh, 'MMK', 'POSTED', 0, 0, now())
 returning id into doc;
-insert into foc_reason (company_id, code, name, account_id)
-select co, 'PROMOTION', 'Promotional giveaway', a.id
-  from account a where a.company_id = co and a.code = '6100';
 insert into document_line (company_id, document_id, line_no, item_id, location_id,
                            entered_qty, entered_uom_id, base_qty, unit_price,
                            net_amount, tax_code_id, gross_amount, foc_reason_id)

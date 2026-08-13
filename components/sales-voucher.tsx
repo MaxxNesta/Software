@@ -5,7 +5,7 @@ import type { ActionResult } from "@/lib/actions";
 
 type Item = {
   id: string; code: string; name: string; is_stocked: boolean;
-  on_hand: string; sale_price: string; avg_cost: string;
+  item_group_id: string; on_hand: string; sale_price: string; avg_cost: string;
 };
 type Customer = { id: string; code: string; name: string; payment_terms_days: number };
 type Location = { id: string; code: string; name: string };
@@ -14,8 +14,10 @@ type CashAccount = { id: string; code: string; name: string };
 type Promotion = {
   id: string; code: string; name: string;
   discount_pct: string; buy_qty: string | null; free_qty: string | null;
+  item_id: string | null; item_group_id: string | null;
   item_code: string | null; group_name: string | null;
 };
+type FocReason = { id: string; code: string; name: string };
 type OpenInvoice = {
   document_id: string; doc_no: string; partner_id: string;
   posting_date: string; due_date: string | null;
@@ -35,8 +37,8 @@ function addDays(iso: string, days: number) {
 }
 
 export function SalesVoucher({
-  action, customers, items, locations, salesmen, cashAccounts, promotions, openInvoices,
-  nextInvoiceNo, today,
+  action, customers, items, locations, salesmen, cashAccounts, promotions,
+  focReasons, openInvoices, nextInvoiceNo, today,
 }: {
   action: (prev: unknown, fd: FormData) => Promise<ActionResult>;
   customers: Customer[];
@@ -45,6 +47,7 @@ export function SalesVoucher({
   salesmen: Salesman[];
   cashAccounts: CashAccount[];
   promotions: Promotion[];
+  focReasons: FocReason[];
   openInvoices: OpenInvoice[];
   nextInvoiceNo: string;
   today: string;
@@ -98,25 +101,59 @@ export function SalesVoucher({
     return gross - gross * ((Number(l.discountPct) || 0) / 100);
   };
 
+  const promoReason = focReasons.find((r) => r.code === "PROMOTION");
+
+  /** The buy-N-get-M promotion covering this item, if any. */
+  function promoFor(itemId: string): Promotion | null {
+    const item = byId(itemId);
+    if (!item) return null;
+    return (
+      promotions.find(
+        (p) =>
+          Number(p.buy_qty) > 0 &&
+          Number(p.free_qty) > 0 &&
+          (p.item_id === itemId ||
+            (p.item_group_id !== null && p.item_group_id === item.item_group_id) ||
+            (p.item_id === null && p.item_group_id === null))
+      ) ?? null
+    );
+  }
+
+  /** Free units earned by a line. Whole multiples only — 25 of a buy-10-get-1 earns 2. */
+  function freeQty(l: Line): number {
+    const p = promoFor(l.itemId);
+    if (!p || !promoReason) return 0;
+    return Math.floor((Number(l.qty) || 0) / Number(p.buy_qty)) * Number(p.free_qty);
+  }
+
   const total = lines.reduce((s, l) => s + amount(l), 0);
   const cashAmount = Number(cashIn) || 0;
   const balance = total - cashAmount;
+  const totalFree = lines.reduce((s, l) => s + freeQty(l), 0);
 
   // Discount is netted into the unit price. Trade discount posts nothing of
   // its own — only settlement discount gets an account.
+  //
+  // Free units go on as separate zero-price lines carrying the promotion
+  // reason, so their cost lands in promotion expense instead of COGS.
   const payload = JSON.stringify(
     lines
       .filter((l) => l.itemId && Number(l.qty) > 0)
-      .map((l) => {
+      .flatMap((l) => {
         const qty = Number(l.qty);
-        return { itemId: l.itemId, qty, unitPrice: qty > 0 ? amount(l) / qty : 0 };
+        const paid = { itemId: l.itemId, qty, unitPrice: qty > 0 ? amount(l) / qty : 0 };
+        const free = freeQty(l);
+        return free > 0
+          ? [paid, { itemId: l.itemId, qty: free, unitPrice: 0, focReasonId: promoReason!.id }]
+          : [paid];
       })
   );
 
+  // Availability must cover the free units too — they leave the warehouse.
   const shortages = lines.filter((l) => {
     if (!l.itemId) return false;
     const item = byId(l.itemId);
-    return item?.is_stocked && Number(l.qty) > Number(item.on_hand);
+    return item?.is_stocked && Number(l.qty) + freeQty(l) > Number(item.on_hand);
   });
 
   const customerInvoices = useMemo(
@@ -227,10 +264,30 @@ export function SalesVoucher({
               </tr>
             </thead>
             <tbody>
-              {lines.map((l) => {
+              {lines.flatMap((l) => {
                 const item = byId(l.itemId);
-                const short = item?.is_stocked && Number(l.qty) > Number(item.on_hand);
-                return (
+                const free = freeQty(l);
+                const short = item?.is_stocked && Number(l.qty) + free > Number(item.on_hand);
+                const promo = promoFor(l.itemId);
+
+                const freeRow =
+                  free > 0 && item ? (
+                    <tr key={`${l.key}-free`}>
+                      <td style={{ paddingLeft: "1.6rem" }}>
+                        <span style={{ color: "var(--ghost)" }}>└ </span>
+                        <span className="m">{item.code}</span>{" "}
+                        <span className="pill warn">{promo!.code}</span>
+                      </td>
+                      <td className="r" style={{ color: "var(--muted)" }}>free</td>
+                      <td className="r">{fmt(free)}</td>
+                      <td className="r" style={{ color: "var(--muted)" }}>0</td>
+                      <td />
+                      <td className="r" style={{ color: "var(--muted)" }}>0</td>
+                      <td />
+                    </tr>
+                  ) : null;
+
+                return [
                   <tr key={l.key}>
                     <td>
                       <select value={l.itemId} onChange={(e) => pickItem(l.key, e.target.value)}>
@@ -260,13 +317,19 @@ export function SalesVoucher({
                       <button type="button" className="ghost tiny" aria-label="Remove line"
                         onClick={() => removeLine(l.key)} disabled={lines.length === 1}>×</button>
                     </td>
-                  </tr>
-                );
+                  </tr>,
+                  freeRow,
+                ];
               })}
             </tbody>
           </table>
         </div>
         <div className="totalbar">
+          {totalFree > 0 && (
+            <span style={{ color: "var(--muted)" }}>
+              {fmt(totalFree)} free unit{totalFree === 1 ? "" : "s"} — cost goes to promotion expense
+            </span>
+          )}
           <span style={{ color: "var(--muted)" }}>Invoice total</span>
           <span className="big">{fmt(total)} MMK</span>
         </div>
