@@ -62,12 +62,15 @@ export async function createPartner(_prev: unknown, fd: FormData): Promise<Actio
 // ------------------------------------------------------ categories & items --
 
 export async function createCategory(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let returnTo: string | null = null;
+
   try {
     const co = await companyId();
 
     const code = str(fd, "code").toUpperCase();
     const name = str(fd, "name");
     const parentId = str(fd, "parent_id") || null;
+    returnTo = str(fd, "return_to") || null;
 
     if (!code) return { error: "Code is required" };
     if (!name) return { error: "Name is required" };
@@ -84,7 +87,8 @@ export async function createCategory(_prev: unknown, fd: FormData): Promise<Acti
   }
 
   revalidatePath("/items/categories");
-  redirect("/items/categories");
+  revalidatePath("/items/new");
+  redirect(returnTo || "/items/categories");
 }
 
 /**
@@ -171,8 +175,11 @@ export async function moveCategory(_prev: unknown, fd: FormData): Promise<Action
 }
 
 export async function createItem(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let returnTo: string | null = null;
+
   try {
     const co = await companyId();
+    returnTo = str(fd, "return_to") || null;
 
     const code = str(fd, "code").toUpperCase();
     const name = str(fd, "name");
@@ -213,7 +220,8 @@ export async function createItem(_prev: unknown, fd: FormData): Promise<ActionRe
   }
 
   revalidatePath("/items");
-  redirect("/items");
+  revalidatePath("/items/categories");
+  redirect(returnTo || "/items");
 }
 
 // --------------------------------------------------------------- invoices --
