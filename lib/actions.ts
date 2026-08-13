@@ -258,7 +258,7 @@ export async function getFormData() {
           order by i.code`,
     sql`select id, code, name from location
          where company_id = ${co} and is_stock_location and is_active order by code`,
-    sql`select g.id, g.code, g.name, g.parent_id, p.name as parent_name
+    sql`select g.id, g.code, g.name, g.name_my, g.parent_id, p.name as parent_name
            from item_group g
            left join item_group p on p.id = g.parent_id
           where g.company_id = ${co} order by g.code`,
