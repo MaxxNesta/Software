@@ -277,3 +277,9 @@ button.tiny { padding: 0.16rem 0.5rem; font-size: 0.78rem; }
   font-family: var(--mono); font-variant-numeric: tabular-nums;
 }
 .totalbar .big { font-size: 1.15rem; }
+
+.readout {
+  font-family: var(--mono); font-size: 0.85rem;
+  padding: 0.46rem 0.6rem; border: 1px solid var(--line);
+  border-radius: 3px; background: var(--ground);
+}

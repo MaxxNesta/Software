@@ -87,6 +87,89 @@ export async function createCategory(_prev: unknown, fd: FormData): Promise<Acti
   redirect("/items/categories");
 }
 
+/**
+ * Inserts a new category directly above an existing one: the new category
+ * takes the target's place in the tree, and the target moves underneath it.
+ * The whole branch below the target comes along, since it hangs off the
+ * target rather than off its parent.
+ */
+export async function insertCategoryAbove(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+
+    const targetId = str(fd, "target_id");
+    const code = str(fd, "code").toUpperCase();
+    const name = str(fd, "name");
+
+    if (!targetId) return { error: "Choose which category to lift" };
+    if (!code) return { error: "Code is required" };
+    if (!name) return { error: "Name is required" };
+
+    const dup = await sql`
+      select 1 from item_group where company_id = ${co} and code = ${code}`;
+    if (dup.length) return { error: `Code ${code} is already used` };
+
+    await sql.begin(async (tx) => {
+      const [target] = await tx`
+        select id, parent_id from item_group
+         where id = ${targetId} and company_id = ${co}`;
+      if (!target) throw new Error("That category no longer exists");
+
+      const [created] = await tx`
+        insert into item_group (company_id, parent_id, code, name, name_my)
+        values (${co}, ${target.parent_id}, ${code}, ${name}, ${str(fd, "name_my") || null})
+        returning id`;
+
+      await tx`
+        update item_group set parent_id = ${created.id} where id = ${target.id}`;
+    });
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/items/categories");
+  revalidatePath("/items/new");
+  redirect("/items/categories");
+}
+
+/** Re-parents a category. Refuses moves that would make the tree cyclic. */
+export async function moveCategory(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+
+    const id = str(fd, "id");
+    const newParent = str(fd, "new_parent_id") || null;
+
+    if (!id) return { error: "Choose a category to move" };
+    if (id === newParent) return { error: "A category cannot sit under itself" };
+
+    if (newParent) {
+      // Moving a category under one of its own descendants would detach the
+      // branch from the tree entirely and loop forever when walking it.
+      const cycle = await sql`
+        with recursive descendants as (
+          select id from item_group where id = ${id} and company_id = ${co}
+          union all
+          select g.id from item_group g join descendants d on g.parent_id = d.id
+        )
+        select 1 from descendants where id = ${newParent}`;
+      if (cycle.length) {
+        return { error: "That would put the category inside its own branch" };
+      }
+    }
+
+    await sql`
+      update item_group set parent_id = ${newParent}
+       where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/items/categories");
+  revalidatePath("/items/new");
+  redirect("/items/categories");
+}
+
 export async function createItem(_prev: unknown, fd: FormData): Promise<ActionResult> {
   try {
     const co = await companyId();

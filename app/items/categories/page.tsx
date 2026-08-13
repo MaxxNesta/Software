@@ -1,5 +1,5 @@
 import { sql } from "@/lib/db";
-import { createCategory, getFormData } from "@/lib/actions";
+import { createCategory, insertCategoryAbove, moveCategory, getFormData } from "@/lib/actions";
 import { CategoryManager } from "@/components/category-manager";
 
 export default async function Categories() {
@@ -29,7 +29,12 @@ export default async function Categories() {
         </span>
       </div>
 
-      <CategoryManager groups={withCounts} action={createCategory} />
+      <CategoryManager
+        groups={withCounts}
+        createAction={createCategory}
+        aboveAction={insertCategoryAbove}
+        moveAction={moveCategory}
+      />
     </>
   );
 }
