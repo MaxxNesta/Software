@@ -1,17 +1,11 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import type { ActionResult } from "@/lib/actions";
+import type { ActionResult, PickerItem } from "@/lib/actions";
+import { ItemPicker } from "./item-picker";
 
-type Item = {
-  id: string;
-  code: string;
-  name: string;
-  is_stocked: boolean;
-  on_hand: string;
-  sale_price: string;
-  avg_cost: string;
-};
+type Item = PickerItem;
+type Node = { id: string; code: string; segment: string; name: string; parent_id: string | null };
 
 type Partner = { id: string; code: string; name: string; payment_terms_days: number };
 type Location = { id: string; code: string; name: string };
@@ -30,9 +24,11 @@ export function InvoiceForm({
   kind,
   action,
   partners,
-  items,
+  items: initialItems,
   locations,
   today,
+  categories,
+  uoms,
 }: {
   kind: "sales" | "purchase";
   action: (prev: unknown, fd: FormData) => Promise<ActionResult>;
@@ -40,11 +36,16 @@ export function InvoiceForm({
   items: Item[];
   locations: Location[];
   today: string;
+  categories: Node[];
+  uoms: { id: string; code: string; name: string }[];
 }) {
   const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
     action as never,
     null
   );
+
+  const [items, setItems] = useState<Item[]>(initialItems);
+  const addItem = (i: Item) => setItems((xs) => [...xs, i]);
 
   const [lines, setLines] = useState<Line[]>([{ key: 1, itemId: "", qty: "", unitPrice: "" }]);
   const [partnerId, setPartnerId] = useState("");
@@ -187,15 +188,16 @@ export function InvoiceForm({
 
                 return (
                   <tr key={l.key}>
-                    <td>
-                      <select value={l.itemId} onChange={(e) => pickItem(l.key, e.target.value)}>
-                        <option value="">Choose an item…</option>
-                        {items.map((i) => (
-                          <option key={i.id} value={i.id}>
-                            {i.code} · {i.name}
-                          </option>
-                        ))}
-                      </select>
+                    <td style={{ minWidth: 240 }}>
+                      <ItemPicker
+                        mode={kind}
+                        items={items}
+                        categories={categories}
+                        uoms={uoms}
+                        value={l.itemId}
+                        onPick={(id) => pickItem(l.key, id)}
+                        onCreated={addItem}
+                      />
                     </td>
                     <td className="r">
                       {!item ? (

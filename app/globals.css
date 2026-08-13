@@ -283,3 +283,36 @@ button.tiny { padding: 0.16rem 0.5rem; font-size: 0.78rem; }
   padding: 0.46rem 0.6rem; border: 1px solid var(--line);
   border-radius: 3px; background: var(--ground);
 }
+
+/* ------------------------------------------------------------- picker --- */
+
+.picker {
+  position: absolute; z-index: 30; top: calc(100% + 2px); left: 0;
+  min-width: 340px; max-width: 460px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  max-height: 340px; overflow-y: auto;
+}
+
+.picker-row {
+  display: flex; align-items: baseline; gap: var(--s2);
+  width: 100%; text-align: left;
+  background: transparent; border: none; border-bottom: 1px solid var(--line-soft);
+  color: var(--ink); font-weight: 400;
+  padding: 0.45rem var(--s3); border-radius: 0;
+}
+.picker-row:hover { background: var(--line-soft); opacity: 1; }
+.picker-row:last-child { border-bottom: none; }
+
+.picker-name { flex: 1; }
+.picker-meta { font-family: var(--mono); font-size: 0.75rem; color: var(--muted); white-space: nowrap; }
+
+.picker-empty { padding: 0.6rem var(--s3); color: var(--muted); font-size: 0.85rem; }
+
+.picker-create { color: var(--dr); font-weight: 500; border-top: 1px solid var(--line); }
+
+.picker-form { padding: var(--s3); display: flex; flex-direction: column; gap: var(--s2); }
+.picker-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--s1); }
+.picker-form .field label { margin-bottom: 2px; }

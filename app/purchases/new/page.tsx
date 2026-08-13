@@ -1,11 +1,17 @@
 import { getFormData, createPurchaseInvoice } from "@/lib/actions";
+import { allCategories } from "@/lib/tree";
+import { sql } from "@/lib/db";
 import { InvoiceForm } from "@/components/invoice-form";
 
 export default async function NewPurchaseInvoice() {
-  const { suppliers, items, locations } = await getFormData();
+  const { suppliers, items, locations, uoms } = await getFormData();
+  const [co] = await sql`select id from company order by created_at limit 1`;
+  const categories = await allCategories(co.id);
   const today = new Date().toISOString().slice(0, 10);
 
-  if (suppliers.length === 0 || items.length === 0 || locations.length === 0) {
+  // Items are deliberately not required: a product can be created from the
+  // voucher itself. A category is, since nothing unclassified may enter stock.
+  if (suppliers.length === 0 || categories.length === 0 || locations.length === 0) {
     return (
       <>
         <div className="page-head">
@@ -14,7 +20,11 @@ export default async function NewPurchaseInvoice() {
         </div>
         <div className="alert">
           {suppliers.length === 0 && <div>No suppliers yet — add one first.</div>}
-          {items.length === 0 && <div>No items yet — add a category and an item first.</div>}
+          {categories.length === 0 && (
+            <div>
+              No categories yet — add one first, so new items have somewhere to file.
+            </div>
+          )}
           {locations.length === 0 && <div>No stock location is set up.</div>}
         </div>
       </>
@@ -38,6 +48,8 @@ export default async function NewPurchaseInvoice() {
         partners={suppliers as never}
         items={items as never}
         locations={locations as never}
+        categories={categories}
+        uoms={uoms as never}
         today={today}
       />
     </>

@@ -1,0 +1,225 @@
+"use client";
+
+import { useMemo, useRef, useState, useTransition } from "react";
+import { createItemInline, type PickerItem } from "@/lib/actions";
+
+type Node = { id: string; code: string; segment: string; name: string; parent_id: string | null };
+type Uom = { id: string; code: string; name: string };
+
+const LEVELS = ["Category", "Sub category", "Level 3", "Level 4", "Level 5"];
+const fmt = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
+
+/**
+ * Type to find an item; if it isn't there yet, create it without leaving the
+ * voucher. Nobody should have to build the whole catalogue before they can
+ * buy anything — but nor should unclassified stock get into inventory, so
+ * creating still asks for a category.
+ */
+export function ItemPicker({
+  items,
+  categories,
+  uoms,
+  value,
+  onPick,
+  onCreated,
+  mode,
+}: {
+  items: PickerItem[];
+  categories: Node[];
+  uoms: Uom[];
+  value: string;
+  onPick: (itemId: string) => void;
+  onCreated: (item: PickerItem) => void;
+  mode: "sales" | "purchase";
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  const selected = items.find((i) => i.id === value);
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return items.slice(0, 12);
+    return items
+      .filter((i) => i.code.toLowerCase().includes(q) || i.name.toLowerCase().includes(q))
+      .slice(0, 12);
+  }, [items, query]);
+
+  // Create form state
+  const [chain, setChain] = useState<string[]>([]);
+  const [uomId, setUomId] = useState(uoms[0]?.id ?? "");
+  const [price, setPrice] = useState("");
+  const [stocked, setStocked] = useState(true);
+
+  const childrenOf = (parentId: string | null) => categories.filter((c) => c.parent_id === parentId);
+
+  const selects: Array<{ depth: number; options: Node[]; value: string }> = [];
+  let parent: string | null = null;
+  for (let d = 0; ; d++) {
+    const options = childrenOf(parent);
+    if (options.length === 0) break;
+    const v = chain[d] ?? "";
+    selects.push({ depth: d, options, value: v });
+    if (!v) break;
+    parent = v;
+  }
+
+  const groupId = chain.length ? chain[chain.length - 1] : "";
+  const groupCode = categories.find((c) => c.id === groupId)?.code ?? "";
+
+  function submitNew() {
+    setError(null);
+    start(async () => {
+      const res = await createItemInline({
+        name: query.trim(),
+        groupId,
+        uomId,
+        price: price ? Number(price) : undefined,
+        isStocked: stocked,
+      });
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      onCreated(res.item);
+      onPick(res.item.id);
+      setCreating(false);
+      setOpen(false);
+      setQuery("");
+      setChain([]);
+      setPrice("");
+    });
+  }
+
+  if (selected && !open) {
+    return (
+      <button
+        type="button"
+        className="ghost"
+        style={{ width: "100%", textAlign: "left", fontWeight: 400, padding: "0.3rem 0.45rem" }}
+        onClick={() => { setOpen(true); setQuery(""); }}
+        title="Change item"
+      >
+        <span className="m">{selected.code}</span> · {selected.name}
+      </button>
+    );
+  }
+
+  return (
+    <div ref={boxRef} style={{ position: "relative" }}>
+      <input
+        type="text"
+        value={query}
+        autoFocus={open}
+        placeholder="Type a code or name…"
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); setCreating(false); }}
+        onFocus={() => setOpen(true)}
+        aria-label="Find an item"
+      />
+
+      {open && !creating && (
+        <div className="picker">
+          {matches.length > 0 ? (
+            matches.map((i) => (
+              <button
+                key={i.id}
+                type="button"
+                className="picker-row"
+                onClick={() => { onPick(i.id); setOpen(false); setQuery(""); }}
+              >
+                <span className="m">{i.code}</span>
+                <span className="picker-name">{i.name}</span>
+                <span className="picker-meta">
+                  {i.is_stocked
+                    ? `${fmt(Number(i.on_hand))} on hand`
+                    : "service"}
+                </span>
+              </button>
+            ))
+          ) : (
+            <div className="picker-empty">
+              No item matches &ldquo;{query}&rdquo;
+            </div>
+          )}
+
+          {query.trim() && (
+            <button
+              type="button"
+              className="picker-row picker-create"
+              onClick={() => { setCreating(true); setError(null); }}
+            >
+              + Create &ldquo;{query.trim()}&rdquo; as a new item
+            </button>
+          )}
+        </div>
+      )}
+
+      {creating && (
+        <div className="picker picker-form">
+          <div className="picker-head">
+            <strong>New item</strong>
+            <button type="button" className="ghost tiny" onClick={() => setCreating(false)}>
+              Cancel
+            </button>
+          </div>
+
+          {error && <div className="alert" style={{ margin: "0 0 0.6rem" }}>{error}</div>}
+
+          <div className="field">
+            <label>Name</label>
+            <div className="readout">{query.trim()}</div>
+          </div>
+
+          {selects.map((s) => (
+            <div className="field" key={s.depth}>
+              <label>{LEVELS[s.depth] ?? `Level ${s.depth + 1}`}</label>
+              <select
+                value={s.value}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  setChain(id ? [...chain.slice(0, s.depth), id] : chain.slice(0, s.depth));
+                }}
+              >
+                <option value="">{s.depth === 0 ? "Choose…" : "— file it here —"}</option>
+                {s.options.map((o) => (
+                  <option key={o.id} value={o.id}>{o.segment} · {o.name}</option>
+                ))}
+              </select>
+            </div>
+          ))}
+
+          <div className="field">
+            <label>Unit</label>
+            <select value={uomId} onChange={(e) => setUomId(e.target.value)}>
+              {uoms.map((u) => (
+                <option key={u.id} value={u.id}>{u.code} · {u.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="field">
+            <label>{mode === "sales" ? "Sale price" : "Purchase price"}</label>
+            <input type="number" min="0" step="any" value={price}
+              onChange={(e) => setPrice(e.target.value)} placeholder="0" />
+          </div>
+
+          <label className="check" style={{ margin: "0.4rem 0" }}>
+            <input type="checkbox" checked={stocked} onChange={(e) => setStocked(e.target.checked)} />
+            Stocked
+          </label>
+
+          <div className="actions">
+            <button type="button" onClick={submitNew} disabled={pending || !groupId}>
+              {pending ? "Creating…" : groupCode ? `Create under ${groupCode}` : "Create"}
+            </button>
+            {!groupId && <span className="hint">Choose a category</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -241,6 +241,113 @@ export async function createItem(_prev: unknown, fd: FormData): Promise<ActionRe
   redirect(returnTo || "/items");
 }
 
+// ------------------------------------------------- inline item creation --
+
+export type NewItemInput = {
+  name: string;
+  nameMy?: string;
+  groupId: string;
+  serial?: string;
+  uomId: string;
+  price?: number;
+  isStocked: boolean;
+};
+
+export type PickerItem = {
+  id: string; code: string; name: string; is_stocked: boolean;
+  item_group_id: string; on_hand: string; sale_price: string; avg_cost: string;
+};
+
+/**
+ * Creates an item from inside a voucher and hands it straight back, so the
+ * line it was needed for can select it without leaving the page. Returns a
+ * result rather than redirecting — the caller is mid-entry.
+ */
+export async function createItemInline(
+  input: NewItemInput
+): Promise<{ ok: true; item: PickerItem } | { ok: false; error: string }> {
+  try {
+    const co = await companyId();
+
+    const name = input.name.trim();
+    if (!name) return { ok: false, error: "Name is required" };
+    if (!input.groupId) return { ok: false, error: "Choose a category" };
+    if (!input.uomId) return { ok: false, error: "Choose a unit" };
+
+    const [grp] = await sql`
+      select code from item_group where id = ${input.groupId} and company_id = ${co}`;
+    if (!grp) return { ok: false, error: "That category no longer exists" };
+
+    // Auto-number within the category unless the user typed a serial. Only
+    // numeric serials count toward the next value; a hand-typed "A1" is left
+    // alone rather than breaking the sequence.
+    let serial = (input.serial ?? "").trim().toUpperCase();
+    if (!serial) {
+      const [next] = await sql`
+        select coalesce(max(serial::int), 0) + 1 as n
+          from item
+         where company_id = ${co} and item_group_id = ${input.groupId}
+           and serial ~ '^[0-9]+$'`;
+      serial = String(next.n).padStart(3, "0");
+    }
+
+    const fullCode = `${grp.code}${serial}`;
+    const dup = await sql`
+      select name from item where company_id = ${co} and code = ${fullCode}`;
+    if (dup.length) {
+      return { ok: false, error: `Code ${fullCode} is already used by ${dup[0].name}` };
+    }
+
+    const created = await sql.begin(async (tx) => {
+      const [item] = await tx`
+        insert into item
+          (company_id, item_group_id, serial, code, name, name_my, base_uom_id, is_stocked)
+        values
+          (${co}, ${input.groupId}, ${serial}, ${fullCode}, ${name},
+           ${input.nameMy?.trim() || null}, ${input.uomId}, ${input.isStocked})
+        returning id, code, name, is_stocked, item_group_id`;
+
+      if (input.price && input.price > 0) {
+        const [level] = await tx`
+          select id from price_level where company_id = ${co} order by sort_order limit 1`;
+        if (level) {
+          await tx`
+            insert into item_price
+              (company_id, item_id, price_level_id, uom_id, currency, price)
+            values (${co}, ${item.id}, ${level.id}, ${input.uomId}, 'MMK', ${input.price})`;
+        }
+      }
+      return item;
+    });
+
+    // The row is already committed. Cache revalidation is a hint, and letting
+    // it throw here would report failure for an item that exists — the user
+    // would retry and hit "code already used" for their own creation.
+    try {
+      revalidatePath("/items");
+      revalidatePath("/items/categories");
+    } catch {
+      // Outside a request context (scripts, tests). Nothing to revalidate.
+    }
+
+    return {
+      ok: true,
+      item: {
+        id: created.id,
+        code: created.code,
+        name: created.name,
+        is_stocked: created.is_stocked,
+        item_group_id: created.item_group_id,
+        on_hand: "0",
+        sale_price: String(input.price ?? 0),
+        avg_cost: "0",
+      },
+    };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 // --------------------------------------------------------------- invoices --
 
 function parseLines(fd: FormData): InvoiceLine[] {

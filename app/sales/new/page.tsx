@@ -1,11 +1,17 @@
 import { getFormData, createSalesInvoice } from "@/lib/actions";
+import { allCategories } from "@/lib/tree";
+import { sql } from "@/lib/db";
 import { SalesVoucher } from "@/components/sales-voucher";
 
 export default async function NewSalesInvoice() {
   const d = await getFormData();
+  const [co] = await sql`select id from company order by created_at limit 1`;
+  const categories = await allCategories(co.id);
   const today = new Date().toISOString().slice(0, 10);
 
-  if (d.customers.length === 0 || d.items.length === 0 || d.locations.length === 0) {
+  // Items are deliberately not required: a product can be created from the
+  // voucher itself. A category is, since nothing unclassified may enter stock.
+  if (d.customers.length === 0 || categories.length === 0 || d.locations.length === 0) {
     return (
       <>
         <div className="page-head">
@@ -14,7 +20,11 @@ export default async function NewSalesInvoice() {
         </div>
         <div className="alert">
           {d.customers.length === 0 && <div>No customers yet — add one first.</div>}
-          {d.items.length === 0 && <div>No items yet — add a category and an item first.</div>}
+          {categories.length === 0 && (
+            <div>
+              No categories yet — add one first, so new items have somewhere to file.
+            </div>
+          )}
           {d.locations.length === 0 && <div>No stock location is set up.</div>}
         </div>
       </>
@@ -42,6 +52,8 @@ export default async function NewSalesInvoice() {
         promotions={d.promotions as never}
         focReasons={d.focReasons as never}
         openInvoices={d.openInvoices as never}
+        categories={categories}
+        uoms={d.uoms as never}
         nextInvoiceNo={d.nextInvoiceNo}
         today={today}
       />

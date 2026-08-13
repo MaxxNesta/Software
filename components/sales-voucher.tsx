@@ -1,12 +1,12 @@
 "use client";
 
 import { useActionState, useMemo, useState } from "react";
-import type { ActionResult } from "@/lib/actions";
+import type { ActionResult, PickerItem } from "@/lib/actions";
+import { ItemPicker } from "./item-picker";
 
-type Item = {
-  id: string; code: string; name: string; is_stocked: boolean;
-  item_group_id: string; on_hand: string; sale_price: string; avg_cost: string;
-};
+type Item = PickerItem;
+type Node = { id: string; code: string; segment: string; name: string; parent_id: string | null };
+type Uom = { id: string; code: string; name: string };
 type Customer = { id: string; code: string; name: string; payment_terms_days: number };
 type Location = { id: string; code: string; name: string };
 type Salesman = { id: string; code: string; name: string; name_my: string | null; commission_pct: string };
@@ -37,12 +37,14 @@ function addDays(iso: string, days: number) {
 }
 
 export function SalesVoucher({
-  action, customers, items, locations, salesmen, cashAccounts, promotions,
-  focReasons, openInvoices, nextInvoiceNo, today,
+  action, customers, items: initialItems, locations, salesmen, cashAccounts, promotions,
+  focReasons, openInvoices, nextInvoiceNo, today, categories, uoms,
 }: {
   action: (prev: unknown, fd: FormData) => Promise<ActionResult>;
   customers: Customer[];
   items: Item[];
+  categories: Node[];
+  uoms: Uom[];
   locations: Location[];
   salesmen: Salesman[];
   cashAccounts: CashAccount[];
@@ -55,6 +57,10 @@ export function SalesVoucher({
   const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
     action as never, null
   );
+
+  // Items created mid-voucher join the list without a page reload.
+  const [items, setItems] = useState<Item[]>(initialItems);
+  const addItem = (i: Item) => setItems((xs) => [...xs, i]);
 
   const [lines, setLines] = useState<Line[]>([
     { key: 1, itemId: "", qty: "", unitPrice: "", discountPct: "" },
@@ -289,13 +295,16 @@ export function SalesVoucher({
 
                 return [
                   <tr key={l.key}>
-                    <td>
-                      <select value={l.itemId} onChange={(e) => pickItem(l.key, e.target.value)}>
-                        <option value="">Choose an item…</option>
-                        {items.map((i) => (
-                          <option key={i.id} value={i.id}>{i.code} · {i.name}</option>
-                        ))}
-                      </select>
+                    <td style={{ minWidth: 240 }}>
+                      <ItemPicker
+                        mode="sales"
+                        items={items}
+                        categories={categories}
+                        uoms={uoms}
+                        value={l.itemId}
+                        onPick={(id) => pickItem(l.key, id)}
+                        onCreated={addItem}
+                      />
                     </td>
                     <td className="r" style={{ color: short ? "var(--bad)" : undefined }}>
                       {!item ? "—" : item.is_stocked ? fmt(Number(item.on_hand)) : "service"}
