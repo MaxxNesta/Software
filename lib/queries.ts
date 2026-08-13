@@ -186,12 +186,26 @@ export async function getItems(companyId: string) {
      order by i.code`;
 }
 
+/**
+ * A trial balance lists each account's closing balance on the side it
+ * naturally falls, and the two columns must agree — that agreement is the
+ * whole point of the report.
+ *
+ * Balances are stored signed (positive debit), so a liability comes back
+ * negative. Presenting that raw would show Accounts Payable as -450,000
+ * rather than a 450,000 credit. The split below puts each balance in the
+ * right column, and an account carrying an abnormal balance — an overdrawn
+ * bank, say — correctly lands on the other side rather than being hidden.
+ */
 export async function getTrialBalance(companyId: string) {
   return sql`
     select a.code, a.name, a.account_type,
-           sum(tb.debit)   as debit,
-           sum(tb.credit)  as credit,
-           sum(tb.balance) as balance
+           sum(tb.debit)   as debit_movement,
+           sum(tb.credit)  as credit_movement,
+           sum(tb.balance) as signed_balance,
+           case when sum(tb.balance) > 0 then  sum(tb.balance) else 0 end as closing_debit,
+           case when sum(tb.balance) < 0 then -sum(tb.balance) else 0 end as closing_credit,
+           fn_is_debit_normal(a.account_type) as debit_normal
       from v_trial_balance tb
       join account a on a.id = tb.account_id
      where tb.company_id = ${companyId}
