@@ -28,8 +28,8 @@ export default async function CategoriesRoot() {
         parentId={null}
         returnTo="/items/categories"
         label="Parent category"
-        codeHint="FOOD"
-        nameHint="Food & Drink"
+        codeHint="01"
+        nameHint="Stationary"
       />
 
       <section>

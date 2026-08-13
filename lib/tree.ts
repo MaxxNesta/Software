@@ -3,6 +3,7 @@ import { sql } from "./db";
 export type Node = {
   id: string;
   code: string;
+  segment: string;
   name: string;
   name_my: string | null;
   parent_id: string | null;
@@ -13,7 +14,7 @@ export type Crumb = { id: string; name: string };
 /** Every category for a company, cheap enough to fetch whole and walk in memory. */
 export async function allCategories(companyId: string): Promise<Node[]> {
   return (await sql`
-    select id, code, name, name_my, parent_id
+    select id, code, segment, name, name_my, parent_id
       from item_group
      where company_id = ${companyId}
      order by code`) as unknown as Node[];

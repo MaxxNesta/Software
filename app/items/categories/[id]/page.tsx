@@ -4,7 +4,8 @@ import { sql } from "@/lib/db";
 import { money, qty } from "@/lib/db";
 import { createCategory, createItem, insertCategoryAbove, moveCategory } from "@/lib/actions";
 import { allCategories, childrenOf, trail, depthOf, levelCounts, branchIds, levelLabel, levelLabelPlural } from "@/lib/tree";
-import { AddCategoryForm, AddItemForm } from "@/components/level-form";
+import { AddCategoryForm } from "@/components/level-form";
+import { ItemForm } from "@/components/item-form";
 import { Restructure } from "@/components/restructure";
 
 export default async function CategoryLevel({ params }: { params: Promise<{ id: string }> }) {
@@ -73,10 +74,11 @@ export default async function CategoryLevel({ params }: { params: Promise<{ id: 
         <AddCategoryForm
           action={createCategory}
           parentId={id}
+          parentCode={here.code}
           returnTo={returnTo}
           label={childLabel}
-          codeHint={`${here.code}-01`}
-          nameHint={depth === 0 ? "Beverages" : "Soft drinks"}
+          codeHint="01"
+          nameHint={depth === 0 ? "Book" : "Exercise Book"}
         />
       </div>
 
@@ -135,13 +137,25 @@ export default async function CategoryLevel({ params }: { params: Promise<{ id: 
         </div>
       </section>
 
-      <AddItemForm
-        action={createItem}
-        groupId={id}
-        groupPath={path}
-        returnTo={returnTo}
-        uoms={uoms as never}
-      />
+      <section>
+        <div className="card">
+          <div className="card-head">
+            <h2>Add an item here</h2>
+            <span className="m" style={{ color: "var(--muted)" }}>
+              codes continue from {here.code}
+            </span>
+          </div>
+          <div className="card-body">
+            <ItemForm
+              action={createItem}
+              nodes={nodes}
+              uoms={uoms as never}
+              returnTo={returnTo}
+              presetGroupId={id}
+            />
+          </div>
+        </div>
+      </section>
 
       <section>
         <div className="card">

@@ -68,8 +68,9 @@ export function Restructure({
               </span>
               <div className="row">
                 <div className="field">
-                  <label htmlFor="ra_code">Code</label>
-                  <input id="ra_code" name="code" type="text" required placeholder="FOOD" />
+                  <label htmlFor="ra_code">Code segment</label>
+                  <input id="ra_code" name="segment" type="text" required placeholder="01" />
+                  <span className="hint">Everything beneath re-codes to match</span>
                 </div>
                 <div className="field">
                   <label htmlFor="ra_name">Name</label>

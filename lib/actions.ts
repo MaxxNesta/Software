@@ -67,21 +67,30 @@ export async function createCategory(_prev: unknown, fd: FormData): Promise<Acti
   try {
     const co = await companyId();
 
-    const code = str(fd, "code").toUpperCase();
+    const segment = str(fd, "segment").toUpperCase();
     const name = str(fd, "name");
     const parentId = str(fd, "parent_id") || null;
     returnTo = str(fd, "return_to") || null;
 
-    if (!code) return { error: "Code is required" };
+    if (!segment) return { error: "Code segment is required" };
     if (!name) return { error: "Name is required" };
 
+    // The full code is the parent chain plus this segment, composed by
+    // trigger. Two siblings sharing a segment would compose to the same
+    // code, so check the composed value rather than the segment alone.
+    const [composed] = await sql`
+      select fn_compose_group_code(${parentId}::uuid, ${segment}) as code`;
+
     const dup = await sql`
-      select 1 from item_group where company_id = ${co} and code = ${code}`;
-    if (dup.length) return { error: `Code ${code} is already used` };
+      select name from item_group where company_id = ${co} and code = ${composed.code}`;
+    if (dup.length) {
+      return { error: `Code ${composed.code} is already used by ${dup[0].name}` };
+    }
 
     await sql`
-      insert into item_group (company_id, parent_id, code, name, name_my)
-      values (${co}, ${parentId}, ${code}, ${name}, ${str(fd, "name_my") || null})`;
+      insert into item_group (company_id, parent_id, segment, code, name, name_my)
+      values (${co}, ${parentId}, ${segment}, ${composed.code}, ${name},
+              ${str(fd, "name_my") || null})`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -102,16 +111,12 @@ export async function insertCategoryAbove(_prev: unknown, fd: FormData): Promise
     const co = await companyId();
 
     const targetId = str(fd, "target_id");
-    const code = str(fd, "code").toUpperCase();
+    const segment = str(fd, "segment").toUpperCase();
     const name = str(fd, "name");
 
     if (!targetId) return { error: "Choose which category to lift" };
-    if (!code) return { error: "Code is required" };
+    if (!segment) return { error: "Code segment is required" };
     if (!name) return { error: "Name is required" };
-
-    const dup = await sql`
-      select 1 from item_group where company_id = ${co} and code = ${code}`;
-    if (dup.length) return { error: `Code ${code} is already used` };
 
     await sql.begin(async (tx) => {
       const [target] = await tx`
@@ -119,9 +124,13 @@ export async function insertCategoryAbove(_prev: unknown, fd: FormData): Promise
          where id = ${targetId} and company_id = ${co}`;
       if (!target) throw new Error("That category no longer exists");
 
+      const [composed] = await tx`
+        select fn_compose_group_code(${target.parent_id}::uuid, ${segment}) as code`;
+
       const [created] = await tx`
-        insert into item_group (company_id, parent_id, code, name, name_my)
-        values (${co}, ${target.parent_id}, ${code}, ${name}, ${str(fd, "name_my") || null})
+        insert into item_group (company_id, parent_id, segment, code, name, name_my)
+        values (${co}, ${target.parent_id}, ${segment}, ${composed.code}, ${name},
+                ${str(fd, "name_my") || null})
         returning id`;
 
       await tx`
@@ -181,26 +190,34 @@ export async function createItem(_prev: unknown, fd: FormData): Promise<ActionRe
     const co = await companyId();
     returnTo = str(fd, "return_to") || null;
 
-    const code = str(fd, "code").toUpperCase();
+    const serial = str(fd, "serial").toUpperCase();
     const name = str(fd, "name");
     const groupId = str(fd, "item_group_id");
     const uomId = str(fd, "base_uom_id");
     const salePrice = num(fd, "sale_price");
 
-    if (!code) return { error: "Code is required" };
+    if (!serial) return { error: "Serial is required" };
     if (!name) return { error: "Name is required" };
     if (!groupId) return { error: "Choose a category" };
     if (!uomId) return { error: "Choose a unit" };
 
-    const dup = await sql`select 1 from item where company_id = ${co} and code = ${code}`;
-    if (dup.length) return { error: `Code ${code} is already used` };
+    const [grp] = await sql`
+      select code from item_group where id = ${groupId} and company_id = ${co}`;
+    if (!grp) return { error: "That category no longer exists" };
+
+    const fullCode = `${grp.code}${serial}`;
+    const dup = await sql`
+      select name from item where company_id = ${co} and code = ${fullCode}`;
+    if (dup.length) {
+      return { error: `Code ${fullCode} is already used by ${dup[0].name}` };
+    }
 
     await sql.begin(async (tx) => {
       const [item] = await tx`
         insert into item
-          (company_id, item_group_id, code, name, name_my, base_uom_id, is_stocked)
+          (company_id, item_group_id, serial, code, name, name_my, base_uom_id, is_stocked)
         values
-          (${co}, ${groupId}, ${code}, ${name}, ${str(fd, "name_my") || null},
+          (${co}, ${groupId}, ${serial}, ${fullCode}, ${name}, ${str(fd, "name_my") || null},
            ${uomId}, ${fd.get("is_stocked") !== null})
         returning id`;
 
