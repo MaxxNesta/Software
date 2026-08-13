@@ -69,6 +69,40 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
               <dt>Partner</dt><dd>{doc.partner_name ? `${doc.partner_code} · ${doc.partner_name}` : "—"}</dd>
               <dt>Location</dt><dd>{doc.location_code ? `${doc.location_code} · ${doc.location_name}` : "—"}</dd>
               <dt>Currency</dt><dd className="m">{doc.currency} @ {Number(doc.exchange_rate)}</dd>
+              {doc.salesman_name && (
+                <>
+                  <dt>Salesman</dt>
+                  <dd>{doc.salesman_code} · {doc.salesman_name}</dd>
+                </>
+              )}
+              {doc.payment_type && (
+                <>
+                  <dt>Payment</dt>
+                  <dd><span className="pill">{doc.payment_type}</span></dd>
+                </>
+              )}
+              {doc.reference && (
+                <>
+                  <dt>Reference</dt>
+                  <dd className="m">{doc.reference}</dd>
+                </>
+              )}
+              {doc.to_deliver && (
+                <>
+                  <dt>Delivery</dt>
+                  <dd>
+                    <span className={`pill ${doc.delivered_at ? "ok" : "warn"}`}>
+                      {doc.delivered_at ? "Delivered" : "To deliver"}
+                    </span>
+                  </dd>
+                </>
+              )}
+              {doc.memo && (
+                <>
+                  <dt>Remark</dt>
+                  <dd className="wrap">{doc.memo}</dd>
+                </>
+              )}
               <dt>Source</dt>
               <dd>
                 {doc.source_doc_no

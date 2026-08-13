@@ -136,6 +136,56 @@ try {
   const revLine = siJournal.find((l) => l.account_code === "4100");
   check("revenue is the sale price", Math.abs(n(revLine?.credit) - sellQty * sellPrice) < 0.01);
 
+  // ---- Cash sale: part payment taken at the counter ---------------------
+
+  const [salesman] = await sql`
+    select id, code from salesman where company_id = ${co.id} order by code limit 1`;
+  const [cashAcct] = await sql`
+    select id, code from account where company_id = ${co.id} and is_cash_account order by code limit 1`;
+
+  const cashQty = 10;
+  const cashPrice = 2000;
+  const cashTotal = cashQty * cashPrice;
+  const paidNow = cashTotal / 2;
+
+  const cs = await postSalesInvoice({
+    companyId: co.id, partnerId: cust.id, locationId: loc.id,
+    docDate: today, dueDate: null, reference: "PO-9981",
+    salesmanId: salesman.id, paymentType: "CASH", toDeliver: true,
+    cashIn: paidNow, cashAccountId: cashAcct.id,
+    lines: [{ itemId: item.id, qty: cashQty, unitPrice: cashPrice }],
+  });
+  console.log(`\n  posted ${cs.docNo} with receipt ${cs.receiptNo}  (${paidNow} of ${cashTotal})`);
+
+  check("cash in creates a receipt document", Boolean(cs.receiptNo));
+
+  const [rc] = await sql`
+    select d.id, d.doc_no, d.gross_total, d.source_document_id
+      from document d where d.doc_no = ${cs.receiptNo} and d.doc_type = 'CUSTOMER_RECEIPT'`;
+  check("receipt is linked back to the invoice", rc?.source_document_id === cs.id);
+  check("receipt is for the cash taken", n(rc?.gross_total) === paidNow);
+
+  const rcJournal = await sql`
+    select account_code, debit, credit from v_journal_line where source_id = ${rc.id}`;
+  check("receipt debits cash", rcJournal.some((l) => n(l.debit) === paidNow && l.account_code === cashAcct.code));
+  check("receipt credits receivables", rcJournal.some((l) => n(l.credit) === paidNow && l.account_code === "1200"));
+
+  const [openAfter] = await sql`
+    select outstanding, gross_total from v_open_item where document_id = ${cs.id}`;
+  check("invoice stays open for the unpaid half",
+    n(openAfter?.outstanding) === cashTotal - paidNow,
+    `${n(openAfter?.outstanding)} of ${n(openAfter?.gross_total)}`);
+
+  const [voucher] = await sql`
+    select payment_type, reference, to_deliver, salesman_id from document where id = ${cs.id}`;
+  check("voucher fields stored",
+    voucher.payment_type === "CASH" && voucher.reference === "PO-9981" &&
+    voucher.to_deliver === true && voucher.salesman_id === salesman.id);
+
+  const pending = await sql`
+    select 1 from v_pending_delivery where document_id = ${cs.id}`;
+  check("to-deliver appears on the warehouse worklist", pending.length === 1);
+
   // ---- Overselling must be refused -------------------------------------
 
   let refused = false;

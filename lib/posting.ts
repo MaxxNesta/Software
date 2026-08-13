@@ -25,7 +25,20 @@ export type InvoiceInput = {
   docDate: string;
   dueDate: string | null;
   memo?: string | null;
+  reference?: string | null;
   lines: InvoiceLine[];
+};
+
+export type SalesInvoiceInput = InvoiceInput & {
+  salesmanId?: string | null;
+  paymentType?: "CASH" | "CREDIT";
+
+  /** Goods leave later. A warehouse flag — the posting is identical either way. */
+  toDeliver?: boolean;
+
+  /** Taken at the counter. Creates a receipt document allocated to this invoice. */
+  cashIn?: number;
+  cashAccountId?: string | null;
 };
 
 type JournalLine = {
@@ -112,8 +125,13 @@ async function writeJournal(
  * Free-of-charge lines move stock but post the cost to an expense account
  * instead of COGS, and raise no revenue and no receivable.
  */
-export async function postSalesInvoice(input: InvoiceInput) {
+export async function postSalesInvoice(input: SalesInvoiceInput) {
   if (input.lines.length === 0) throw new Error("An invoice needs at least one line");
+
+  const cashIn = round4(input.cashIn ?? 0);
+  if (cashIn > 0 && !input.cashAccountId) {
+    throw new Error("Choose which cash or bank account the money went into");
+  }
 
   return sql.begin(async (tx) => {
     const { companyId, partnerId, locationId, docDate, dueDate } = input;
@@ -134,11 +152,14 @@ export async function postSalesInvoice(input: InvoiceInput) {
       insert into document
         (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date, due_date,
          partner_id, location_id, currency, exchange_rate, status,
-         net_total, tax_total, gross_total, memo, posted_at)
+         net_total, tax_total, gross_total, memo, posted_at,
+         payment_type, salesman_id, reference, to_deliver)
       values
         (${companyId}, 'SALES_INVOICE', ${docNo}, ${fiscalYear}, ${docDate}::date,
          ${docDate}::date, ${dueDate}, ${partnerId}, ${locationId}, 'MMK', 1, 'POSTED',
-         ${netTotal}, 0, ${netTotal}, ${input.memo ?? null}, now())
+         ${netTotal}, 0, ${netTotal}, ${input.memo ?? null}, now(),
+         ${input.paymentType ?? "CREDIT"}, ${input.salesmanId ?? null},
+         ${input.reference ?? null}, ${input.toDeliver ?? false})
       returning id`;
 
     const journal: JournalLine[] = [];
@@ -230,7 +251,57 @@ export async function postSalesInvoice(input: InvoiceInput) {
 
     await tx`update document set journal_entry_id = ${entryId} where id = ${doc.id}`;
 
-    return { id: doc.id as string, docNo: docNo as string };
+    // Money taken at the counter becomes a real receipt document allocated to
+    // this invoice, rather than a number on the invoice header. That is what
+    // keeps the receivable an open item: a part payment leaves the balance
+    // attached to this specific invoice instead of vanishing into a total.
+    let receiptNo: string | null = null;
+
+    if (cashIn > 0) {
+      if (cashIn > netTotal) {
+        throw new Error(
+          `Cash in (${cashIn}) is more than the invoice total (${netTotal})`
+        );
+      }
+
+      const rcNoRows = await tx`
+        select fn_next_document_no(${companyId}, 'CUSTOMER_RECEIPT', ${fiscalYear}::uuid) as no`;
+      receiptNo = rcNoRows[0].no;
+
+      const [receipt] = await tx`
+        insert into document
+          (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date,
+           partner_id, location_id, currency, exchange_rate, status,
+           net_total, tax_total, gross_total, memo, posted_at,
+           source_document_id, payment_type, salesman_id)
+        values
+          (${companyId}, 'CUSTOMER_RECEIPT', ${receiptNo}, ${fiscalYear}, ${docDate}::date,
+           ${docDate}::date, ${partnerId}, ${locationId}, 'MMK', 1, 'POSTED',
+           ${cashIn}, 0, ${cashIn}, ${`Cash received against ${docNo}`}, now(),
+           ${doc.id}, 'CASH', ${input.salesmanId ?? null})
+        returning id`;
+
+      await tx`
+        insert into payment_allocation
+          (company_id, payment_id, invoice_id, amount, base_amount)
+        values (${companyId}, ${receipt.id}, ${doc.id}, ${cashIn}, ${cashIn})`;
+
+      const ar = await tx`
+        select fn_resolve_control_account(${companyId}, 'AR_CONTROL', ${partnerId}) as a`;
+
+      const receiptEntry = await writeJournal(
+        tx, companyId, docDate, "CUSTOMER_RECEIPT", receipt.id,
+        `${receiptNo} against ${docNo}`,
+        [
+          { accountId: input.cashAccountId as string, amount: cashIn },
+          { accountId: ar[0].a, amount: -cashIn, partnerId },
+        ]
+      );
+
+      await tx`update document set journal_entry_id = ${receiptEntry} where id = ${receipt.id}`;
+    }
+
+    return { id: doc.id as string, docNo: docNo as string, receiptNo };
   });
 }
 

@@ -101,12 +101,14 @@ export async function getDocument(id: string) {
     select d.*, p.name as partner_name, p.code as partner_code,
            l.code as location_code, l.name as location_name,
            src.doc_no as source_doc_no, src.id as source_id,
-           je.entry_no
+           je.entry_no,
+           sm.name as salesman_name, sm.code as salesman_code
       from document d
       left join business_partner p  on p.id = d.partner_id
       left join location         l  on l.id = d.location_id
       left join document        src on src.id = d.source_document_id
       left join journal_entry   je  on je.id = d.journal_entry_id
+      left join salesman        sm  on sm.id = d.salesman_id
      where d.id = ${id}`;
   return doc ?? null;
 }

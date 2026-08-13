@@ -2,15 +2,29 @@ import { sql } from "@/lib/db";
 import { createCategory, getFormData } from "@/lib/actions";
 import { SimpleForm } from "@/components/simple-form";
 
+type Group = {
+  id: string;
+  code: string;
+  name: string;
+  parent_id: string | null;
+};
+
+/** Depth-first walk, so any number of levels renders in order. */
+function flatten(groups: Group[], parentId: string | null = null, depth = 0): Array<Group & { depth: number }> {
+  return groups
+    .filter((g) => g.parent_id === parentId)
+    .flatMap((g) => [{ ...g, depth }, ...flatten(groups, g.id, depth + 1)]);
+}
+
 export default async function Categories() {
   const { groups } = await getFormData();
 
   const counts = await sql`
     select item_group_id, count(*)::int as n from item group by item_group_id`;
-  const countFor = (id: string) =>
-    counts.find((c: any) => c.item_group_id === id)?.n ?? 0;
+  const countFor = (id: string) => counts.find((c: any) => c.item_group_id === id)?.n ?? 0;
 
-  const roots = groups.filter((g: any) => !g.parent_id);
+  const tree = flatten(groups as unknown as Group[]);
+  const maxDepth = tree.reduce((m, g) => Math.max(m, g.depth), 0);
 
   return (
     <>
@@ -18,41 +32,38 @@ export default async function Categories() {
         <span className="eyebrow">Master data</span>
         <h1>Categories</h1>
         <span className="page-sub">
-          Category, then sub category, then the product itself. The category an
-          item sits in decides which inventory, COGS, and revenue accounts its
-          postings land in.
+          Nest as deep as you need — any category can be the parent of another.
+          The category an item sits in decides which inventory, COGS, and revenue
+          accounts its postings land in, and a rule set on a parent covers every
+          child unless the child overrides it.
         </span>
       </div>
 
       <div className="grid2">
         <div className="card">
-          <div className="card-head"><h2>Existing</h2></div>
+          <div className="card-head">
+            <h2>Tree</h2>
+            <span className="page-sub">
+              {tree.length} categories, {maxDepth + 1} level{maxDepth === 0 ? "" : "s"} deep
+            </span>
+          </div>
           <div className="tablewrap">
             <table>
               <thead>
                 <tr><th>Code</th><th>Name</th><th className="r">Items</th></tr>
               </thead>
               <tbody>
-                {roots.map((root: any) => {
-                  const children = groups.filter((g: any) => g.parent_id === root.id);
-                  return [
-                    <tr key={root.id}>
-                      <td className="code">{root.code}</td>
-                      <td style={{ fontWeight: 500 }}>{root.name}</td>
-                      <td className="r">{countFor(root.id) || ""}</td>
-                    </tr>,
-                    ...children.map((c: any) => (
-                      <tr key={c.id}>
-                        <td className="code" style={{ paddingLeft: "2rem", color: "var(--muted)" }}>
-                          {c.code}
-                        </td>
-                        <td style={{ paddingLeft: "2rem" }}>{c.name}</td>
-                        <td className="r">{countFor(c.id) || ""}</td>
-                      </tr>
-                    )),
-                  ];
-                })}
-                {roots.length === 0 && (
+                {tree.map((g) => (
+                  <tr key={g.id}>
+                    <td className="code" style={{ paddingLeft: `${1 + g.depth * 1.4}rem`, color: g.depth === 0 ? undefined : "var(--muted)" }}>
+                      {g.depth > 0 && <span style={{ color: "var(--ghost)" }}>└ </span>}
+                      {g.code}
+                    </td>
+                    <td className="wrap" style={{ fontWeight: g.depth === 0 ? 500 : 400 }}>{g.name}</td>
+                    <td className="r">{countFor(g.id) || ""}</td>
+                  </tr>
+                ))}
+                {tree.length === 0 && (
                   <tr><td colSpan={3} className="empty">No categories yet</td></tr>
                 )}
               </tbody>
@@ -67,22 +78,26 @@ export default async function Categories() {
               <div className="field">
                 <label htmlFor="parent_id">Parent</label>
                 <select id="parent_id" name="parent_id" defaultValue="">
-                  <option value="">None — this is a top-level category</option>
-                  {roots.map((g: any) => (
+                  <option value="">None — top level</option>
+                  {tree.map((g) => (
                     <option key={g.id} value={g.id}>
-                      {g.code} · {g.name}
+                      {"  ".repeat(g.depth)}
+                      {g.depth > 0 ? "└ " : ""}
+                      {g.name} ({g.code})
                     </option>
                   ))}
                 </select>
-                <span className="hint">Pick a parent to create a sub category</span>
+                <span className="hint">
+                  Any category can be a parent. Pick one to nest a level deeper.
+                </span>
               </div>
               <div className="field">
                 <label htmlFor="code">Code</label>
-                <input id="code" name="code" type="text" placeholder="BEV-SOFT" required />
+                <input id="code" name="code" type="text" placeholder="BEV-SOFT-COLA" required />
               </div>
               <div className="field">
                 <label htmlFor="name">Name</label>
-                <input id="name" name="name" type="text" placeholder="Soft drinks" required />
+                <input id="name" name="name" type="text" placeholder="Cola" required />
               </div>
               <div className="field">
                 <label htmlFor="name_my">Name (Burmese)</label>

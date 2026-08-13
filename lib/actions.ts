@@ -166,6 +166,9 @@ export async function createSalesInvoice(_prev: unknown, fd: FormData): Promise<
     if (!str(fd, "partner_id")) return { error: "Choose a customer" };
     if (!str(fd, "location_id")) return { error: "Choose a warehouse" };
 
+    const paymentType = str(fd, "payment_type") === "CASH" ? "CASH" : "CREDIT";
+    const cashIn = num(fd, "cash_in");
+
     const result = await postSalesInvoice({
       companyId: co,
       partnerId: str(fd, "partner_id"),
@@ -173,6 +176,12 @@ export async function createSalesInvoice(_prev: unknown, fd: FormData): Promise<
       docDate: str(fd, "doc_date"),
       dueDate: str(fd, "due_date") || null,
       memo: str(fd, "memo") || null,
+      reference: str(fd, "reference") || null,
+      salesmanId: str(fd, "salesman_id") || null,
+      paymentType,
+      toDeliver: fd.get("to_deliver") !== null,
+      cashIn,
+      cashAccountId: str(fd, "cash_account_id") || null,
       lines,
     });
 
@@ -207,6 +216,7 @@ export async function createPurchaseInvoice(_prev: unknown, fd: FormData): Promi
       docDate: str(fd, "doc_date"),
       dueDate: str(fd, "due_date") || null,
       memo: str(fd, "memo") || null,
+      reference: str(fd, "reference") || null,
       lines,
     });
 
@@ -228,7 +238,10 @@ export async function createPurchaseInvoice(_prev: unknown, fd: FormData): Promi
 export async function getFormData() {
   const co = await companyId();
 
-  const [customers, suppliers, items, locations, groups, uoms] = await Promise.all([
+  const [
+    customers, suppliers, items, locations, groups, uoms,
+    salesmen, promotions, cashAccounts, openInvoices, nextNo,
+  ] = await Promise.all([
     sql`select id, code, name, payment_terms_days from business_partner
          where company_id = ${co} and is_customer and is_active order by code`,
     sql`select id, code, name, payment_terms_days from business_partner
@@ -250,7 +263,43 @@ export async function getFormData() {
            left join item_group p on p.id = g.parent_id
           where g.company_id = ${co} order by g.code`,
     sql`select id, code, name from uom where company_id = ${co} order by code`,
+
+    sql`select id, code, name, name_my, commission_pct from salesman
+         where company_id = ${co} and is_active order by code`,
+
+    sql`select p.id, p.code, p.name, p.discount_pct, p.buy_qty, p.free_qty,
+                p.valid_from, p.valid_to,
+                i.code as item_code, g.name as group_name
+           from promotion p
+           left join item i on i.id = p.item_id
+           left join item_group g on g.id = p.item_group_id
+          where p.company_id = ${co} and p.is_active
+            and p.valid_from <= current_date
+            and (p.valid_to is null or p.valid_to >= current_date)
+          order by p.code`,
+
+    sql`select id, code, name from account
+         where company_id = ${co} and is_cash_account and is_active order by code`,
+
+    sql`select document_id, doc_no, partner_id, posting_date, due_date,
+                gross_total, outstanding, aging_bucket
+           from v_open_item
+          where company_id = ${co} and doc_type = 'SALES_INVOICE'
+          order by posting_date desc`,
+
+    // Shown on the voucher before posting. The real number is taken under a
+    // row lock at posting time, so this is a preview and may move if someone
+    // else posts first.
+    sql`select coalesce(prefix, 'SI-') || lpad(coalesce(next_value, 1)::text,
+                coalesce(padding, 6), '0') as no
+           from number_series
+          where company_id = ${co} and document_type = 'SALES_INVOICE'
+          limit 1`,
   ]);
 
-  return { customers, suppliers, items, locations, groups, uoms };
+  return {
+    customers, suppliers, items, locations, groups, uoms,
+    salesmen, promotions, cashAccounts, openInvoices,
+    nextInvoiceNo: (nextNo[0]?.no as string) ?? "SI-000001",
+  };
 }

@@ -1,21 +1,21 @@
 import { getFormData, createSalesInvoice } from "@/lib/actions";
-import { InvoiceForm } from "@/components/invoice-form";
+import { SalesVoucher } from "@/components/sales-voucher";
 
 export default async function NewSalesInvoice() {
-  const { customers, items, locations } = await getFormData();
+  const d = await getFormData();
   const today = new Date().toISOString().slice(0, 10);
 
-  if (customers.length === 0 || items.length === 0 || locations.length === 0) {
+  if (d.customers.length === 0 || d.items.length === 0 || d.locations.length === 0) {
     return (
       <>
         <div className="page-head">
           <span className="eyebrow">Sales</span>
-          <h1>New sales invoice</h1>
+          <h1>Sales voucher</h1>
         </div>
         <div className="alert">
-          {customers.length === 0 && <div>No customers yet — add one first.</div>}
-          {items.length === 0 && <div>No items yet — add a category and an item first.</div>}
-          {locations.length === 0 && <div>No stock location is set up.</div>}
+          {d.customers.length === 0 && <div>No customers yet — add one first.</div>}
+          {d.items.length === 0 && <div>No items yet — add a category and an item first.</div>}
+          {d.locations.length === 0 && <div>No stock location is set up.</div>}
         </div>
       </>
     );
@@ -25,19 +25,23 @@ export default async function NewSalesInvoice() {
     <>
       <div className="page-head">
         <span className="eyebrow">Sales</span>
-        <h1>New sales invoice</h1>
+        <h1>Sales voucher</h1>
         <span className="page-sub">
           Stock leaves at its moving-average cost, revenue is recognised, and the
-          customer&rsquo;s balance opens against this invoice.
+          balance opens against this invoice.
         </span>
       </div>
 
-      <InvoiceForm
-        kind="sales"
+      <SalesVoucher
         action={createSalesInvoice}
-        partners={customers as never}
-        items={items as never}
-        locations={locations as never}
+        customers={d.customers as never}
+        items={d.items as never}
+        locations={d.locations as never}
+        salesmen={d.salesmen as never}
+        cashAccounts={d.cashAccounts as never}
+        promotions={d.promotions as never}
+        openInvoices={d.openInvoices as never}
+        nextInvoiceNo={d.nextInvoiceNo}
         today={today}
       />
     </>
