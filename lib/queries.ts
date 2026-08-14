@@ -208,6 +208,131 @@ export async function getLocations(companyId: string) {
      order by l.code`;
 }
 
+// -------------------------------------------------------- three statements --
+
+/**
+ * Revenue less COGS less expense, for a date range. `amount` is always
+ * shown natural-positive per account — revenue's credit balance and an
+ * expense's debit balance both read as a plain positive number, and the
+ * three section totals combine with plain subtraction.
+ */
+export async function getIncomeStatement(companyId: string, from: string, to: string) {
+  return sql`
+    select a.id, a.code, a.name, a.account_type,
+           case when fn_is_debit_normal(a.account_type)
+                then sum(jl.base_amount) else -sum(jl.base_amount) end as amount
+      from journal_line jl
+      join journal_entry je on je.id = jl.journal_entry_id
+      join account a on a.id = jl.account_id
+     where jl.company_id = ${companyId}
+       and a.account_type in ('REVENUE', 'COGS', 'EXPENSE')
+       and je.entry_date between ${from}::date and ${to}::date
+     group by a.id, a.code, a.name, a.account_type
+    having sum(jl.base_amount) <> 0
+     order by a.account_type, a.code`;
+}
+
+/**
+ * Asset/liability/equity balances as of a date, cumulative from inception —
+ * a balance sheet is a snapshot, not a period. Revenue/COGS/expense accounts
+ * are never closed to equity here, so their cumulative net (through asOf)
+ * is folded in as a "Retained earnings" line — without it Assets would not
+ * equal Liabilities + Equity.
+ */
+export async function getBalanceSheet(companyId: string, asOf: string) {
+  const [rows, netIncomeRows] = await Promise.all([
+    sql`
+      select a.id, a.code, a.name, a.account_type,
+             case when fn_is_debit_normal(a.account_type)
+                  then sum(jl.base_amount) else -sum(jl.base_amount) end as amount
+        from journal_line jl
+        join journal_entry je on je.id = jl.journal_entry_id
+        join account a on a.id = jl.account_id
+       where jl.company_id = ${companyId}
+         and a.account_type in ('ASSET', 'LIABILITY', 'EQUITY')
+         and je.entry_date <= ${asOf}::date
+       group by a.id, a.code, a.name, a.account_type
+      having sum(jl.base_amount) <> 0
+       order by a.account_type, a.code`,
+    sql`
+      select coalesce(-sum(jl.base_amount), 0) as net_income
+        from journal_line jl
+        join journal_entry je on je.id = jl.journal_entry_id
+        join account a on a.id = jl.account_id
+       where jl.company_id = ${companyId}
+         and a.account_type in ('REVENUE', 'COGS', 'EXPENSE')
+         and je.entry_date <= ${asOf}::date`,
+  ]);
+
+  return { rows, netIncome: Number(netIncomeRows[0]?.net_income ?? 0) };
+}
+
+/**
+ * Direct-method cash flow: every cash/bank-touching journal line, attributed
+ * to a category by the OTHER side of its entry rather than the cash side
+ * itself — decomposing per contra line handles multi-line vouchers
+ * correctly, and excluding cash-to-cash contra lines drops internal
+ * transfers, which are not a real inflow or outflow.
+ */
+export async function getCashFlowStatement(companyId: string, from: string, to: string) {
+  const [rows, beginning, ending] = await Promise.all([
+    sql`
+      select
+        case
+          when je.source_type in ('CUSTOMER_RECEIPT', 'SALES_INVOICE') then 'Received from customers'
+          when je.source_type = 'SUPPLIER_PAYMENT' then 'Paid to suppliers'
+          when a2.account_type = 'REVENUE' then 'Received from customers'
+          when a2.account_type = 'COGS' then 'Paid to suppliers'
+          when a2.account_type = 'EXPENSE' then 'Operating expenses paid'
+          when a2.account_type = 'EQUITY' then 'Owner contributions / drawings'
+          when a2.account_type = 'LIABILITY' then 'Loans and other liabilities'
+          when a2.account_type = 'ASSET' then 'Purchase / sale of fixed assets'
+          else 'Other'
+        end as category,
+        case
+          when je.source_type in ('CUSTOMER_RECEIPT', 'SALES_INVOICE', 'SUPPLIER_PAYMENT')
+            or a2.account_type in ('REVENUE', 'COGS', 'EXPENSE') then 'operating'
+          when a2.account_type = 'ASSET' then 'investing'
+          when a2.account_type in ('EQUITY', 'LIABILITY') then 'financing'
+          else 'operating'
+        end as section,
+        -sum(jl2.base_amount) as amount
+        from journal_line jl_cash
+        join journal_entry je on je.id = jl_cash.journal_entry_id
+        join account a_cash on a_cash.id = jl_cash.account_id
+        join journal_line jl2 on jl2.journal_entry_id = je.id and jl2.id <> jl_cash.id
+        join account a2 on a2.id = jl2.account_id
+       where jl_cash.company_id = ${companyId}
+         and (a_cash.is_cash_account or a_cash.is_bank_account)
+         and not (a2.is_cash_account or a2.is_bank_account)
+         and je.entry_date between ${from}::date and ${to}::date
+       group by category, section
+       order by section, category`,
+    sql`
+      select coalesce(sum(jl.base_amount), 0) as balance
+        from journal_line jl
+        join journal_entry je on je.id = jl.journal_entry_id
+        join account a on a.id = jl.account_id
+       where jl.company_id = ${companyId}
+         and (a.is_cash_account or a.is_bank_account)
+         and je.entry_date < ${from}::date`,
+    sql`
+      select coalesce(sum(jl.base_amount), 0) as balance
+        from journal_line jl
+        join journal_entry je on je.id = jl.journal_entry_id
+        join account a on a.id = jl.account_id
+       where jl.company_id = ${companyId}
+         and (a.is_cash_account or a.is_bank_account)
+         and je.entry_date <= ${to}::date`,
+  ]);
+
+  return {
+    rows,
+    beginningCash: Number(beginning[0]?.balance ?? 0),
+    endingCash: Number(ending[0]?.balance ?? 0),
+  };
+}
+
 export async function getSalesmen(companyId: string) {
   return sql`
     select s.id, s.code, s.name, s.name_my, s.phone, s.location_id,

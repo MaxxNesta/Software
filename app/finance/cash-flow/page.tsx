@@ -1,0 +1,99 @@
+import { money } from "@/lib/db";
+import { getCompany, getCashFlowStatement } from "@/lib/queries";
+
+function defaultFrom() {
+  return `${new Date().getFullYear()}-01-01`;
+}
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+const SECTIONS: Array<{ key: string; label: string }> = [
+  { key: "operating", label: "Operating activities" },
+  { key: "investing", label: "Investing activities" },
+  { key: "financing", label: "Financing activities" },
+];
+
+export default async function CashFlow({
+  searchParams,
+}: {
+  searchParams: Promise<{ from?: string; to?: string }>;
+}) {
+  const company = await getCompany();
+  if (!company) return <div className="empty">No company found.</div>;
+
+  const { from, to } = await searchParams;
+  const range = { from: from || defaultFrom(), to: to || today() };
+
+  const { rows, beginningCash, endingCash } = await getCashFlowStatement(company.id, range.from, range.to);
+  const typed = rows as unknown as Array<{ category: string; section: string; amount: string }>;
+
+  const netChange = SECTIONS.reduce(
+    (s, sec) => s + typed.filter((r) => r.section === sec.key).reduce((s2, r) => s2 + Number(r.amount), 0),
+    0
+  );
+
+  return (
+    <>
+      <div className="page-head">
+        <span className="eyebrow">Reports</span>
+        <h1>Cash flow statement</h1>
+        <span className="page-sub">
+          Direct method &mdash; actual cash in and out, by category, for the
+          period below. Movements between your own cash and bank accounts are
+          excluded; they are not a real inflow or outflow.
+        </span>
+      </div>
+
+      <form className="row" style={{ marginBottom: "1rem", alignItems: "flex-end" }}>
+        <div className="field">
+          <label htmlFor="from">From</label>
+          <input id="from" name="from" type="date" defaultValue={range.from} />
+        </div>
+        <div className="field">
+          <label htmlFor="to">To</label>
+          <input id="to" name="to" type="date" defaultValue={range.to} />
+        </div>
+        <div className="actions"><button type="submit">Update</button></div>
+      </form>
+
+      <section>
+        <div className="card">
+          <div className="card-head">
+            <h2>Statement</h2>
+            <span className="page-sub">{range.from} to {range.to}</span>
+          </div>
+          <div className="tablewrap">
+            <table>
+              {SECTIONS.map((sec) => {
+                const items = typed.filter((r) => r.section === sec.key);
+                const total = items.reduce((s, r) => s + Number(r.amount), 0);
+                if (items.length === 0) return null;
+                return (
+                  <tbody key={sec.key}>
+                    <tr><td colSpan={2} style={{ background: "var(--line-soft)" }}><span className="eyebrow">{sec.label}</span></td></tr>
+                    {items.map((r) => (
+                      <tr key={r.category}>
+                        <td className="wrap">{r.category}</td>
+                        <td className="r">{money(r.amount)}</td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td>Net {sec.label.toLowerCase()}</td>
+                      <td className="r" style={{ fontWeight: 600 }}>{money(total)}</td>
+                    </tr>
+                  </tbody>
+                );
+              })}
+              <tfoot>
+                <tr><td>Net change in cash</td><td className="r" style={{ fontWeight: 700 }}>{money(netChange)}</td></tr>
+                <tr><td>Cash at beginning of period</td><td className="r">{money(beginningCash)}</td></tr>
+                <tr><td>Cash at end of period</td><td className="r" style={{ fontWeight: 700 }}>{money(endingCash)}</td></tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      </section>
+    </>
+  );
+}
