@@ -40,6 +40,7 @@ copy it exactly, correctly, and spend the effort on the Myanmar layer.
 | [Document flow](docs/01-document-flow.md) | Document types, states, and what flows to what |
 | [Posting matrix](docs/02-posting-matrix.md) | Every document's GL effect and where accounts resolve from |
 | [Open decisions](docs/03-decisions.md) | Unresolved choices, with recommendations |
+| [Development setup](docs/04-development.md) | Getting a working copy running, and the rules that keep the ledger correct |
 
 Competitive research is kept locally in `reference/`, outside version control.
 
