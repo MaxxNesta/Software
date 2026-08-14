@@ -5,11 +5,12 @@ import { redirect } from "next/navigation";
 import { sql } from "./db";
 import { scaffoldCompany } from "./setup";
 import {
-  postSalesInvoice, postPurchaseInvoice,
+  postSalesInvoice, postPurchaseInvoice, postSaleWithDelivery, postPurchaseWithReceipt,
+  postSalesOrder, postPurchaseOrder, postDelivery, postGoodsReceipt,
   postSupplierPayment, postCustomerReceipt,
   postCashVoucher, postBankVoucher, postJournalVoucher,
   postCashTransfer, postAccountOpening,
-  type InvoiceLine, type Allocation, type VoucherLine,
+  type InvoiceLine, type OrderLine, type FulfillmentLine, type Allocation, type VoucherLine,
 } from "./posting";
 
 export type ActionResult = { error: string } | { ok: true };
@@ -522,10 +523,11 @@ export async function createSalesInvoice(_prev: unknown, fd: FormData): Promise<
     if (!str(fd, "partner_id")) return { error: "Choose a customer" };
     if (!str(fd, "location_id")) return { error: "Choose a warehouse" };
 
-    const paymentType = str(fd, "payment_type") === "CASH" ? "CASH" : "CREDIT";
+    const paymentType: "CASH" | "CREDIT" = str(fd, "payment_type") === "CASH" ? "CASH" : "CREDIT";
     const cashIn = num(fd, "cash_in");
+    const toDeliver = fd.get("to_deliver") !== null;
 
-    const result = await postSalesInvoice({
+    const input = {
       companyId: co,
       partnerId: str(fd, "partner_id"),
       locationId: str(fd, "location_id"),
@@ -535,11 +537,16 @@ export async function createSalesInvoice(_prev: unknown, fd: FormData): Promise<
       reference: str(fd, "reference") || null,
       salesmanId: str(fd, "salesman_id") || null,
       paymentType,
-      toDeliver: fd.get("to_deliver") !== null,
+      toDeliver,
       cashIn,
       cashAccountId: str(fd, "cash_account_id") || null,
       lines,
-    });
+    };
+
+    // Checking "to deliver" defers the delivery — this posts revenue only,
+    // and stock leaves later when someone fulfils it. Left unchecked, the
+    // goods leave right now: delivery and invoice post together.
+    const result = toDeliver ? await postSalesInvoice(input) : await postSaleWithDelivery(input);
 
     docId = result.id;
   } catch (e) {
@@ -551,6 +558,7 @@ export async function createSalesInvoice(_prev: unknown, fd: FormData): Promise<
   revalidatePath("/receivables");
   revalidatePath("/ledger");
   revalidatePath("/items");
+  revalidatePath("/items/stock");
   redirect(`/documents/${docId}`);
 }
 
@@ -565,7 +573,91 @@ export async function createPurchaseInvoice(_prev: unknown, fd: FormData): Promi
     if (!str(fd, "partner_id")) return { error: "Choose a supplier" };
     if (!str(fd, "location_id")) return { error: "Choose a warehouse" };
 
-    const result = await postPurchaseInvoice({
+    const input = {
+      companyId: co,
+      partnerId: str(fd, "partner_id"),
+      locationId: str(fd, "location_id"),
+      docDate: str(fd, "doc_date"),
+      dueDate: str(fd, "due_date") || null,
+      memo: str(fd, "memo") || null,
+      reference: str(fd, "reference") || null,
+      lines,
+    };
+
+    // Mirrors to_deliver on the sales side: unchecked means the goods
+    // haven't arrived yet, so only the GR/IR-clearing side of the bill
+    // posts, and a receipt clears it later. Checked (the default) receives
+    // and bills in the same breath.
+    const receivedNow = fd.get("received_now") !== null;
+    const result = receivedNow ? await postPurchaseWithReceipt(input) : await postPurchaseInvoice(input);
+
+    docId = result.id;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/");
+  revalidatePath("/documents");
+  revalidatePath("/payables");
+  revalidatePath("/ledger");
+  revalidatePath("/items");
+  revalidatePath("/items/stock");
+  redirect(`/documents/${docId}`);
+}
+
+// -------------------------------------------------- orders & fulfilment --
+
+function parseOrderLines(fd: FormData): OrderLine[] {
+  const raw = String(fd.get("lines") ?? "[]");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("Could not read the order lines");
+  }
+  if (!Array.isArray(parsed)) throw new Error("Could not read the order lines");
+
+  return parsed
+    .map((l: any) => ({
+      itemId: String(l.itemId ?? ""),
+      qty: Number(l.qty),
+      unitPrice: l.unitPrice ? Number(l.unitPrice) : undefined,
+    }))
+    .filter((l) => l.itemId && l.qty > 0);
+}
+
+function parseFulfillmentLines(fd: FormData): FulfillmentLine[] {
+  const raw = String(fd.get("lines") ?? "[]");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("Could not read the lines");
+  }
+  if (!Array.isArray(parsed)) throw new Error("Could not read the lines");
+
+  return parsed
+    .map((l: any) => ({
+      itemId: String(l.itemId ?? ""),
+      qty: Number(l.qty),
+      unitCost: l.unitCost ? Number(l.unitCost) : undefined,
+      sourceLineId: l.sourceLineId || null,
+    }))
+    .filter((l) => l.itemId && l.qty > 0);
+}
+
+export async function createSalesOrder(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let docId: string;
+
+  try {
+    const co = await companyId();
+    const lines = parseOrderLines(fd);
+
+    if (lines.length === 0) return { error: "Add at least one line with a quantity" };
+    if (!str(fd, "partner_id")) return { error: "Choose a customer" };
+    if (!str(fd, "location_id")) return { error: "Choose a warehouse" };
+
+    const result = await postSalesOrder({
       companyId: co,
       partnerId: str(fd, "partner_id"),
       locationId: str(fd, "location_id"),
@@ -581,11 +673,159 @@ export async function createPurchaseInvoice(_prev: unknown, fd: FormData): Promi
     return { error: e instanceof Error ? e.message : String(e) };
   }
 
-  revalidatePath("/");
   revalidatePath("/documents");
-  revalidatePath("/payables");
-  revalidatePath("/ledger");
+  revalidatePath("/sales/orders");
+  revalidatePath("/items/stock");
+  redirect(`/documents/${docId}`);
+}
+
+export async function createPurchaseOrder(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let docId: string;
+
+  try {
+    const co = await companyId();
+    const lines = parseOrderLines(fd);
+
+    if (lines.length === 0) return { error: "Add at least one line with a quantity" };
+    if (!str(fd, "partner_id")) return { error: "Choose a supplier" };
+    if (!str(fd, "location_id")) return { error: "Choose a warehouse" };
+
+    const result = await postPurchaseOrder({
+      companyId: co,
+      partnerId: str(fd, "partner_id"),
+      locationId: str(fd, "location_id"),
+      docDate: str(fd, "doc_date"),
+      dueDate: str(fd, "due_date") || null,
+      memo: str(fd, "memo") || null,
+      reference: str(fd, "reference") || null,
+      lines,
+    });
+
+    docId = result.id;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/documents");
+  revalidatePath("/purchases/orders");
+  revalidatePath("/items/stock");
+  redirect(`/documents/${docId}`);
+}
+
+export async function createDelivery(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let docId: string;
+
+  try {
+    const co = await companyId();
+    const lines = parseFulfillmentLines(fd);
+
+    if (lines.length === 0) return { error: "Add at least one line with a quantity" };
+    if (!str(fd, "partner_id")) return { error: "Choose a customer" };
+    if (!str(fd, "location_id")) return { error: "Choose a warehouse" };
+
+    const result = await postDelivery({
+      companyId: co,
+      partnerId: str(fd, "partner_id"),
+      locationId: str(fd, "location_id"),
+      docDate: str(fd, "doc_date"),
+      memo: str(fd, "memo") || null,
+      reference: str(fd, "reference") || null,
+      sourceDocumentId: str(fd, "source_document_id") || null,
+      lines,
+    });
+
+    docId = result.id;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/documents");
   revalidatePath("/items");
+  revalidatePath("/items/stock");
+  redirect(`/documents/${docId}`);
+}
+
+/**
+ * One click from the "pending deliveries" list: delivers exactly what a
+ * to_deliver invoice already billed, no re-keying. Service lines on that
+ * invoice have nothing to deliver and are skipped.
+ */
+export async function deliverPendingInvoice(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let docId: string;
+
+  try {
+    const co = await companyId();
+    const invoiceId = str(fd, "invoice_id");
+    if (!invoiceId) return { error: "Choose an invoice" };
+
+    const [invoice] = await sql`
+      select id, partner_id, location_id, doc_date
+        from document
+       where id = ${invoiceId} and company_id = ${co} and doc_type = 'SALES_INVOICE'`;
+    if (!invoice) return { error: "That invoice no longer exists" };
+
+    const lines = await sql`
+      select dl.item_id, dl.base_qty, dl.foc_reason_id
+        from document_line dl
+        join item i on i.id = dl.item_id
+       where dl.document_id = ${invoiceId} and i.is_stocked`;
+
+    if (lines.length === 0) return { error: "Nothing on this invoice needs delivering" };
+
+    const result = await postDelivery({
+      companyId: co,
+      partnerId: invoice.partner_id,
+      locationId: invoice.location_id,
+      docDate: new Date().toISOString().slice(0, 10),
+      reference: `Against invoice`,
+      sourceDocumentId: invoice.id,
+      lines: lines.map((l: any) => ({
+        itemId: l.item_id, qty: Number(l.base_qty), focReasonId: l.foc_reason_id,
+      })),
+    });
+
+    docId = result.id;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/documents");
+  revalidatePath("/sales/deliver");
+  revalidatePath("/items");
+  revalidatePath("/items/stock");
+  redirect(`/documents/${docId}`);
+}
+
+export async function createGoodsReceipt(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let docId: string;
+
+  try {
+    const co = await companyId();
+    const lines = parseFulfillmentLines(fd);
+
+    if (lines.length === 0) return { error: "Add at least one line with a quantity" };
+    if (!str(fd, "partner_id")) return { error: "Choose a supplier" };
+    if (!str(fd, "location_id")) return { error: "Choose a warehouse" };
+
+    const result = await postGoodsReceipt({
+      companyId: co,
+      partnerId: str(fd, "partner_id"),
+      locationId: str(fd, "location_id"),
+      docDate: str(fd, "doc_date"),
+      memo: str(fd, "memo") || null,
+      reference: str(fd, "reference") || null,
+      sourceDocumentId: str(fd, "source_document_id") || null,
+      lines,
+    });
+
+    docId = result.id;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/documents");
+  revalidatePath("/items");
+  revalidatePath("/items/stock");
   redirect(`/documents/${docId}`);
 }
 

@@ -6,10 +6,8 @@ import { ItemPicker } from "./item-picker";
 
 type Item = PickerItem;
 type Node = { id: string; code: string; segment: string; name: string; parent_id: string | null };
-
 type Partner = { id: string; code: string; name: string; payment_terms_days: number };
 type Location = { id: string; code: string; name: string };
-
 type Line = { key: number; itemId: string; qty: string; unitPrice: string };
 
 const fmt = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
@@ -20,7 +18,12 @@ function addDays(iso: string, days: number) {
   return d.toISOString().slice(0, 10);
 }
 
-export function InvoiceForm({
+/**
+ * A commitment, not a posting: no stock check, no cost column, nothing to
+ * balance. Orders exist to be fulfilled later, so this is just "what, how
+ * much, roughly what price" for the record.
+ */
+export function OrderForm({
   kind,
   action,
   partners,
@@ -86,13 +89,6 @@ export function InvoiceForm({
       .map((l) => ({ itemId: l.itemId, qty: Number(l.qty), unitPrice: Number(l.unitPrice) || 0 }))
   );
 
-  // Warn before submitting rather than after the server rejects it.
-  const shortages = lines.filter((l) => {
-    if (!isSales || !l.itemId) return false;
-    const item = byId(l.itemId);
-    return item?.is_stocked && Number(l.qty) > Number(item.on_hand);
-  });
-
   return (
     <form action={formAction} className="form wide">
       {state && "error" in state && <div className="alert">{state.error}</div>}
@@ -107,18 +103,11 @@ export function InvoiceForm({
           <div className="row">
             <div className="field">
               <label htmlFor="partner_id">{isSales ? "Customer" : "Supplier"}</label>
-              <select
-                id="partner_id"
-                name="partner_id"
-                value={partnerId}
-                onChange={(e) => pickPartner(e.target.value)}
-                required
-              >
+              <select id="partner_id" name="partner_id" value={partnerId}
+                onChange={(e) => pickPartner(e.target.value)} required>
                 <option value="">Choose…</option>
                 {partners.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.code} · {p.name}
-                  </option>
+                  <option key={p.id} value={p.id}>{p.code} · {p.name}</option>
                 ))}
               </select>
             </div>
@@ -127,35 +116,22 @@ export function InvoiceForm({
               <label htmlFor="location_id">Warehouse</label>
               <select id="location_id" name="location_id" defaultValue={locations[0]?.id ?? ""} required>
                 {locations.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.code} · {l.name}
-                  </option>
+                  <option key={l.id} value={l.id}>{l.code} · {l.name}</option>
                 ))}
               </select>
             </div>
 
             <div className="field">
-              <label htmlFor="doc_date">Invoice date</label>
-              <input
-                id="doc_date"
-                name="doc_date"
-                type="date"
-                value={docDate}
-                onChange={(e) => setDocDate(e.target.value)}
-                required
-              />
+              <label htmlFor="doc_date">Order date</label>
+              <input id="doc_date" name="doc_date" type="date" value={docDate}
+                onChange={(e) => setDocDate(e.target.value)} required />
             </div>
 
             <div className="field">
-              <label htmlFor="due_date">Due date</label>
-              <input
-                id="due_date"
-                name="due_date"
-                type="date"
-                value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-              />
-              <span className="hint">Filled from payment terms</span>
+              <label htmlFor="due_date">Needed by</label>
+              <input id="due_date" name="due_date" type="date" value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)} />
+              <span className="hint">Optional</span>
             </div>
           </div>
         </div>
@@ -164,28 +140,20 @@ export function InvoiceForm({
       <div className="card">
         <div className="card-head">
           <h2>Lines</h2>
-          <button type="button" className="ghost tiny" onClick={addLine}>
-            Add line
-          </button>
+          <button type="button" className="ghost tiny" onClick={addLine}>Add line</button>
         </div>
 
         <div className="tablewrap">
           <table className="linetable">
             <thead>
               <tr>
-                <th>Item</th>
-                <th className="r">{isSales ? "On hand" : "Avg cost"}</th>
-                <th className="r">Qty</th>
-                <th className="r">Unit price</th>
-                <th className="r">Amount</th>
-                <th />
+                <th>Item</th><th className="r">Qty</th><th className="r">Expected price</th>
+                <th className="r">Amount</th><th />
               </tr>
             </thead>
             <tbody>
               {lines.map((l) => {
                 const item = byId(l.itemId);
-                const short = isSales && item?.is_stocked && Number(l.qty) > Number(item.on_hand);
-
                 return (
                   <tr key={l.key}>
                     <td style={{ minWidth: 240 }}>
@@ -199,48 +167,20 @@ export function InvoiceForm({
                         onCreated={addItem}
                       />
                     </td>
-                    <td className="r">
-                      {!item ? (
-                        "—"
-                      ) : isSales ? (
-                        <span style={{ color: short ? "var(--bad)" : undefined }}>
-                          {item.is_stocked ? fmt(Number(item.on_hand)) : "service"}
-                        </span>
-                      ) : (
-                        fmt(Number(item.avg_cost))
-                      )}
-                    </td>
                     <td className="narrow">
-                      <input
-                        type="number"
-                        min="0"
-                        step="any"
-                        value={l.qty}
+                      <input type="number" min="0" step="any" value={l.qty}
                         onChange={(e) => setLine(l.key, { qty: e.target.value })}
-                        aria-label="Quantity"
-                      />
+                        aria-label="Quantity" />
                     </td>
                     <td className="narrow">
-                      <input
-                        type="number"
-                        min="0"
-                        step="any"
-                        value={l.unitPrice}
+                      <input type="number" min="0" step="any" value={l.unitPrice}
                         onChange={(e) => setLine(l.key, { unitPrice: e.target.value })}
-                        aria-label="Unit price"
-                      />
+                        aria-label="Expected price" />
                     </td>
                     <td className="r">{fmt(amount(l))}</td>
                     <td className="tight">
-                      <button
-                        type="button"
-                        className="ghost tiny"
-                        onClick={() => removeLine(l.key)}
-                        aria-label="Remove line"
-                        disabled={lines.length === 1}
-                      >
-                        ×
-                      </button>
+                      <button type="button" className="ghost tiny" onClick={() => removeLine(l.key)}
+                        aria-label="Remove line" disabled={lines.length === 1}>×</button>
                     </td>
                   </tr>
                 );
@@ -250,32 +190,10 @@ export function InvoiceForm({
         </div>
 
         <div className="totalbar">
-          <span style={{ color: "var(--muted)" }}>Total</span>
+          <span style={{ color: "var(--muted)" }}>Expected total</span>
           <span className="big">{fmt(total)} MMK</span>
         </div>
       </div>
-
-      {shortages.length > 0 && (
-        <div className="alert">
-          Not enough stock for{" "}
-          {shortages.map((l) => byId(l.itemId)?.code).join(", ")}. Posting will be
-          rejected — reduce the quantity or receive stock first.
-        </div>
-      )}
-
-      {!isSales && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem", marginTop: "0.5rem" }}>
-          <label className="check" htmlFor="received_now">
-            <input id="received_now" name="received_now" type="checkbox" defaultChecked />
-            Received now — goods are already in the warehouse
-          </label>
-          <span className="hint">
-            Checked: a goods receipt posts alongside the bill, now. Unchecked:
-            only the payable side posts — the goods haven&rsquo;t arrived yet,
-            so receive them later from Purchases → Goods receipts.
-          </span>
-        </div>
-      )}
 
       <div className="field">
         <label htmlFor="memo">Note</label>
@@ -283,11 +201,12 @@ export function InvoiceForm({
       </div>
 
       <div className="actions">
-        <button type="submit" disabled={pending || total === 0 || shortages.length > 0}>
-          {pending ? "Posting…" : `Post ${isSales ? "sales" : "purchase"} invoice`}
+        <button type="submit" disabled={pending || total === 0}>
+          {pending ? "Saving…" : `Save ${isSales ? "sales" : "purchase"} order`}
         </button>
         <span className="page-sub">
-          Posting writes the stock movement and the journal entry together, or neither.
+          Commits nothing yet — no stock moves and nothing posts to the ledger
+          until this is delivered {isSales ? "" : "or received"}.
         </span>
       </div>
     </form>

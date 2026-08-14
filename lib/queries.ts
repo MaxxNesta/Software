@@ -190,6 +190,127 @@ export async function getItems(companyId: string) {
      order by i.code`;
 }
 
+// --------------------------------------------------- orders & fulfilment --
+
+/** Open sales order lines — ordered less delivered so far, only where that's still positive. */
+export async function getOpenSalesOrders(companyId: string) {
+  return sql`
+    select o.id as order_id, o.doc_no as order_no, o.partner_id, p.name as partner_name,
+           o.location_id,
+           ol.id as line_id, ol.item_id, i.code as item_code, i.name as item_name,
+           ol.base_qty as ordered_qty,
+           coalesce(d.delivered_qty, 0) as delivered_qty,
+           ol.base_qty - coalesce(d.delivered_qty, 0) as remaining_qty
+      from document o
+      join document_line ol on ol.document_id = o.id
+      join item i on i.id = ol.item_id
+      join business_partner p on p.id = o.partner_id
+      left join (
+        select dl.source_line_id, sum(dl.base_qty) as delivered_qty
+          from document_line dl join document dd on dd.id = dl.document_id
+         where dd.doc_type = 'DELIVERY' and dd.status = 'POSTED'
+         group by dl.source_line_id
+      ) d on d.source_line_id = ol.id
+     where o.company_id = ${companyId} and o.doc_type = 'SALES_ORDER' and o.status = 'POSTED'
+       and (ol.base_qty - coalesce(d.delivered_qty, 0)) > 0
+     order by o.doc_no, ol.line_no`;
+}
+
+/** Open purchase order lines — ordered less received so far. */
+export async function getOpenPurchaseOrders(companyId: string) {
+  return sql`
+    select o.id as order_id, o.doc_no as order_no, o.partner_id, p.name as partner_name,
+           o.location_id,
+           ol.id as line_id, ol.item_id, i.code as item_code, i.name as item_name,
+           ol.unit_price as expected_price,
+           ol.base_qty as ordered_qty,
+           coalesce(r.received_qty, 0) as received_qty,
+           ol.base_qty - coalesce(r.received_qty, 0) as remaining_qty
+      from document o
+      join document_line ol on ol.document_id = o.id
+      join item i on i.id = ol.item_id
+      join business_partner p on p.id = o.partner_id
+      left join (
+        select dl.source_line_id, sum(dl.base_qty) as received_qty
+          from document_line dl join document dd on dd.id = dl.document_id
+         where dd.doc_type = 'GOODS_RECEIPT' and dd.status = 'POSTED'
+         group by dl.source_line_id
+      ) r on r.source_line_id = ol.id
+     where o.company_id = ${companyId} and o.doc_type = 'PURCHASE_ORDER' and o.status = 'POSTED'
+       and (ol.base_qty - coalesce(r.received_qty, 0)) > 0
+     order by o.doc_no, ol.line_no`;
+}
+
+/** Sales invoices marked "to deliver" that no delivery has fulfilled yet. */
+export async function getPendingDeliveries(companyId: string) {
+  return sql`
+    select inv.id, inv.doc_no, inv.doc_date, p.name as partner_name,
+           count(il.id)::int as lines, sum(il.base_qty)::numeric as total_qty
+      from document inv
+      join document_line il on il.document_id = inv.id
+      join business_partner p on p.id = inv.partner_id
+     where inv.company_id = ${companyId} and inv.doc_type = 'SALES_INVOICE'
+       and inv.to_deliver and inv.status = 'POSTED'
+       and not exists (
+         select 1 from document dd where dd.source_document_id = inv.id and dd.doc_type = 'DELIVERY'
+       )
+     group by inv.id, inv.doc_no, inv.doc_date, p.name
+     order by inv.doc_date`;
+}
+
+/**
+ * Reserved and incoming quantity per item, for the stock position — demand
+ * committed but not yet delivered (sales orders and to-deliver invoices),
+ * and supply committed but not yet received (purchase orders).
+ */
+export async function getReservedQty(companyId: string) {
+  return sql`
+    with so_remaining as (
+      select ol.item_id, sum(ol.base_qty - coalesce(d.delivered_qty, 0)) as qty
+        from document o
+        join document_line ol on ol.document_id = o.id
+        left join (
+          select dl.source_line_id, sum(dl.base_qty) as delivered_qty
+            from document_line dl join document dd on dd.id = dl.document_id
+           where dd.doc_type = 'DELIVERY' and dd.status = 'POSTED'
+           group by dl.source_line_id
+        ) d on d.source_line_id = ol.id
+       where o.company_id = ${companyId} and o.doc_type = 'SALES_ORDER' and o.status = 'POSTED'
+       group by ol.item_id
+      having sum(ol.base_qty - coalesce(d.delivered_qty, 0)) > 0
+    ),
+    invoice_pending as (
+      select il.item_id, sum(il.base_qty) as qty
+        from document inv
+        join document_line il on il.document_id = inv.id
+       where inv.company_id = ${companyId} and inv.doc_type = 'SALES_INVOICE'
+         and inv.to_deliver and inv.status = 'POSTED'
+         and not exists (
+           select 1 from document dd where dd.source_document_id = inv.id and dd.doc_type = 'DELIVERY'
+         )
+       group by il.item_id
+    )
+    select item_id, sum(qty) as reserved_qty
+      from (select * from so_remaining union all select * from invoice_pending) x
+     group by item_id`;
+}
+
+export async function getIncomingQty(companyId: string) {
+  return sql`
+    select ol.item_id, sum(ol.base_qty - coalesce(r.received_qty, 0)) as incoming_qty
+      from document o
+      join document_line ol on ol.document_id = o.id
+      left join (
+        select dl.source_line_id, sum(dl.base_qty) as received_qty
+          from document_line dl join document dd on dd.id = dl.document_id
+         where dd.doc_type = 'GOODS_RECEIPT' and dd.status = 'POSTED'
+         group by dl.source_line_id
+      ) r on r.source_line_id = ol.id
+     where o.company_id = ${companyId} and o.doc_type = 'PURCHASE_ORDER' and o.status = 'POSTED'
+     group by ol.item_id
+    having sum(ol.base_qty - coalesce(r.received_qty, 0)) > 0`;
+}
+
 export async function getBrands(companyId: string) {
   return sql`
     select id, code, name, name_my, is_active

@@ -33,12 +33,47 @@ export type SalesInvoiceInput = InvoiceInput & {
   salesmanId?: string | null;
   paymentType?: "CASH" | "CREDIT";
 
-  /** Goods leave later. A warehouse flag — the posting is identical either way. */
+  /** Goods leave later. When true, this invoice posts revenue only — no
+   *  delivery is created, and stock doesn't move until one is. */
   toDeliver?: boolean;
 
   /** Taken at the counter. Creates a receipt document allocated to this invoice. */
   cashIn?: number;
   cashAccountId?: string | null;
+};
+
+/** An order commits nothing — no stock movement, no ledger entry. */
+export type OrderLine = { itemId: string; qty: number; unitPrice?: number };
+export type OrderInput = {
+  companyId: string;
+  partnerId: string;
+  locationId: string;
+  docDate: string;
+  dueDate?: string | null;
+  memo?: string | null;
+  reference?: string | null;
+  lines: OrderLine[];
+};
+
+/** A delivery or goods receipt line — unpriced on the sales side (the
+ *  invoice carries price), priced on the purchase side (there is no
+ *  separate purchase invoice line price to fall back on for valuation). */
+export type FulfillmentLine = {
+  itemId: string;
+  qty: number;
+  focReasonId?: string | null;
+  unitCost?: number;
+  sourceLineId?: string | null;
+};
+export type FulfillmentInput = {
+  companyId: string;
+  partnerId: string;
+  locationId: string;
+  docDate: string;
+  memo?: string | null;
+  reference?: string | null;
+  sourceDocumentId?: string | null;
+  lines: FulfillmentLine[];
 };
 
 type JournalLine = {
@@ -116,16 +151,187 @@ async function writeJournal(
 }
 
 /**
- * Sales invoice: revenue is recognised, the customer owes money, stock leaves
- * at its moving-average cost, and that cost becomes COGS.
+ * Sales order: a commitment, nothing more. No stock movement, no ledger
+ * entry — it exists to be delivered against (and reported as "reserved"
+ * demand on the stock position) until then.
+ */
+export async function postSalesOrder(input: OrderInput) {
+  return postOrder(input, "SALES_ORDER");
+}
+
+/** Purchase order: the purchase-side mirror of postSalesOrder. */
+export async function postPurchaseOrder(input: OrderInput) {
+  return postOrder(input, "PURCHASE_ORDER");
+}
+
+async function postOrder(input: OrderInput, docType: "SALES_ORDER" | "PURCHASE_ORDER") {
+  if (input.lines.length === 0) throw new Error("An order needs at least one line");
+
+  return sql.begin(async (tx) => {
+    const { companyId, partnerId, locationId, docDate, dueDate } = input;
+
+    const fyRows = await tx`select fn_fiscal_year_for(${companyId}, ${docDate}::date) as fy`;
+    const fiscalYear = fyRows[0]?.fy ?? null;
+    if (!fiscalYear) throw new Error(`No fiscal year covers ${docDate}`);
+
+    const noRows = await tx`select fn_next_document_no(${companyId}, ${docType}, ${fiscalYear}::uuid) as no`;
+    const docNo = noRows[0].no;
+
+    const netTotal = round4(input.lines.reduce((s, l) => s + l.qty * (l.unitPrice ?? 0), 0));
+
+    const [doc] = await tx`
+      insert into document
+        (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date, due_date,
+         partner_id, location_id, currency, exchange_rate, status,
+         net_total, tax_total, gross_total, memo, posted_at, reference)
+      values
+        (${companyId}, ${docType}, ${docNo}, ${fiscalYear}, ${docDate}::date,
+         ${docDate}::date, ${dueDate ?? null}, ${partnerId}, ${locationId}, 'MMK', 1, 'POSTED',
+         ${netTotal}, 0, ${netTotal}, ${input.memo ?? null}, now(), ${input.reference ?? null})
+      returning id`;
+
+    let lineNo = 0;
+    for (const line of input.lines) {
+      lineNo++;
+      const [item] = await tx`select base_uom_id from item where id = ${line.itemId}`;
+      if (!item) throw new Error("Item not found");
+
+      const net = round4(line.qty * (line.unitPrice ?? 0));
+      await tx`
+        insert into document_line
+          (company_id, document_id, line_no, item_id, location_id,
+           entered_qty, entered_uom_id, base_qty, unit_price, net_amount, tax_amount, gross_amount)
+        values
+          (${companyId}, ${doc.id}, ${lineNo}, ${line.itemId}, ${locationId},
+           ${line.qty}, ${item.base_uom_id}, ${line.qty}, ${line.unitPrice ?? 0}, ${net}, 0, ${net})`;
+    }
+
+    // Orders post nothing to the ledger — see docs/01-document-flow.md.
+    return { id: doc.id as string, docNo: docNo as string };
+  });
+}
+
+/**
+ * Delivery: stock leaves at its moving-average cost, and that cost becomes
+ * COGS. This is the only sales-side document that moves inventory.
  *
- *   Dr Accounts Receivable / Cr Sales Revenue
- *   Dr Cost of Goods Sold  / Cr Inventory
+ *   Dr Cost of Goods Sold / Cr Inventory
  *
  * Free-of-charge lines move stock but post the cost to an expense account
- * instead of COGS, and raise no revenue and no receivable.
+ * instead of COGS.
  */
-export async function postSalesInvoice(input: SalesInvoiceInput) {
+async function _postDelivery(tx: TransactionSql, input: FulfillmentInput) {
+  if (input.lines.length === 0) throw new Error("A delivery needs at least one line");
+
+  const { companyId, partnerId, locationId, docDate } = input;
+
+  const fyRows = await tx`select fn_fiscal_year_for(${companyId}, ${docDate}::date) as fy`;
+  const fiscalYear = fyRows[0]?.fy ?? null;
+  if (!fiscalYear) throw new Error(`No fiscal year covers ${docDate}`);
+
+  const noRows = await tx`select fn_next_document_no(${companyId}, 'DELIVERY', ${fiscalYear}::uuid) as no`;
+  const docNo = noRows[0].no;
+
+  const [doc] = await tx`
+    insert into document
+      (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date,
+       partner_id, location_id, currency, exchange_rate, status,
+       net_total, tax_total, gross_total, memo, posted_at, reference, source_document_id)
+    values
+      (${companyId}, 'DELIVERY', ${docNo}, ${fiscalYear}, ${docDate}::date,
+       ${docDate}::date, ${partnerId}, ${locationId}, 'MMK', 1, 'POSTED',
+       0, 0, 0, ${input.memo ?? null}, now(), ${input.reference ?? null}, ${input.sourceDocumentId ?? null})
+    returning id`;
+
+  const journal: JournalLine[] = [];
+  let lineNo = 0;
+  let deliveredValue = 0;
+
+  for (const line of input.lines) {
+    lineNo++;
+
+    const [item] = await tx`
+      select id, code, name, is_stocked, base_uom_id from item where id = ${line.itemId}`;
+    if (!item) throw new Error("Item not found");
+    if (!item.is_stocked) throw new Error(`${item.code} (${item.name}) is not stocked and cannot be delivered`);
+
+    // Cost is the moving average at this moment, frozen onto the movement.
+    // Recomputing it later would silently restate closed periods.
+    const costRows = await tx`
+      select fn_moving_average_cost(${companyId}, ${line.itemId}) as cost,
+             fn_qty_on_hand(${companyId}, ${line.itemId}, ${locationId}) as on_hand`;
+
+    const unitCost = Number(costRows[0].cost);
+    const onHand = Number(costRows[0].on_hand);
+
+    if (onHand < line.qty) {
+      throw new Error(
+        `Not enough ${item.code} (${item.name}) at this location — ` +
+          `${onHand} on hand, ${line.qty} requested`
+      );
+    }
+
+    const totalCost = round4(unitCost * line.qty);
+    deliveredValue += totalCost;
+
+    await tx`
+      insert into document_line
+        (company_id, document_id, line_no, item_id, location_id,
+         entered_qty, entered_uom_id, base_qty, unit_price, net_amount, gross_amount,
+         foc_reason_id, source_line_id)
+      values
+        (${companyId}, ${doc.id}, ${lineNo}, ${line.itemId}, ${locationId},
+         ${line.qty}, ${item.base_uom_id}, ${line.qty}, ${unitCost}, ${totalCost},
+         ${totalCost}, ${line.focReasonId ?? null}, ${line.sourceLineId ?? null})`;
+
+    await tx`
+      insert into stock_movement
+        (company_id, item_id, location_id, movement_date, qty,
+         unit_cost, total_cost, document_id)
+      values
+        (${companyId}, ${line.itemId}, ${locationId}, ${docDate}::date,
+         ${-line.qty}, ${unitCost}, ${-totalCost}, ${doc.id})`;
+
+    const inventory = await tx`
+      select fn_resolve_account_for_item(${companyId}, 'INVENTORY', ${line.itemId}) as a`;
+    journal.push({ accountId: inventory[0].a, amount: -totalCost, locationId });
+
+    if (line.focReasonId) {
+      const [foc] = await tx`select account_id from foc_reason where id = ${line.focReasonId}`;
+      journal.push({ accountId: foc.account_id, amount: totalCost, locationId });
+    } else {
+      const cogs = await tx`
+        select fn_resolve_account_for_item(${companyId}, 'COGS', ${line.itemId}) as a`;
+      journal.push({ accountId: cogs[0].a, amount: totalCost, locationId });
+    }
+  }
+
+  deliveredValue = round4(deliveredValue);
+  const entryId = await writeJournal(tx, companyId, docDate, "DELIVERY", doc.id, `${docNo} delivery`, journal);
+  await tx`
+    update document set journal_entry_id = ${entryId}, net_total = ${deliveredValue},
+           gross_total = ${deliveredValue}
+     where id = ${doc.id}`;
+
+  return { id: doc.id as string, docNo: docNo as string };
+}
+
+export async function postDelivery(input: FulfillmentInput) {
+  return sql.begin((tx) => _postDelivery(tx, input));
+}
+
+/**
+ * Sales invoice: revenue is recognised and the customer owes money. Stock
+ * does not move here — that already happened on delivery (or happens in the
+ * same breath via postSaleWithDelivery, for the common "sell it and it
+ * leaves right now" case).
+ *
+ *   Dr Accounts Receivable / Cr Sales Revenue
+ */
+async function _postSalesInvoice(
+  tx: TransactionSql,
+  input: SalesInvoiceInput & { deliveryId?: string | null }
+) {
   if (input.lines.length === 0) throw new Error("An invoice needs at least one line");
 
   const cashIn = round4(input.cashIn ?? 0);
@@ -133,266 +339,393 @@ export async function postSalesInvoice(input: SalesInvoiceInput) {
     throw new Error("Choose which cash or bank account the money went into");
   }
 
-  return sql.begin(async (tx) => {
-    const { companyId, partnerId, locationId, docDate, dueDate } = input;
+  const { companyId, partnerId, locationId, docDate, dueDate } = input;
 
-    const fyRows = await tx`select fn_fiscal_year_for(${companyId}, ${docDate}::date) as fy`;
-    const fiscalYear = fyRows[0]?.fy ?? null;
-    if (!fiscalYear) throw new Error(`No fiscal year covers ${docDate}`);
+  const fyRows = await tx`select fn_fiscal_year_for(${companyId}, ${docDate}::date) as fy`;
+  const fiscalYear = fyRows[0]?.fy ?? null;
+  if (!fiscalYear) throw new Error(`No fiscal year covers ${docDate}`);
 
-    const noRows = await tx`
-      select fn_next_document_no(${companyId}, 'SALES_INVOICE', ${fiscalYear}::uuid) as no`;
-    const docNo = noRows[0].no;
+  const noRows = await tx`
+    select fn_next_document_no(${companyId}, 'SALES_INVOICE', ${fiscalYear}::uuid) as no`;
+  const docNo = noRows[0].no;
 
-    const netTotal = round4(
-      input.lines.reduce((s, l) => s + (l.focReasonId ? 0 : l.qty * l.unitPrice), 0)
-    );
+  const netTotal = round4(
+    input.lines.reduce((s, l) => s + (l.focReasonId ? 0 : l.qty * l.unitPrice), 0)
+  );
 
-    const [doc] = await tx`
+  const [doc] = await tx`
+    insert into document
+      (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date, due_date,
+       partner_id, location_id, currency, exchange_rate, status,
+       net_total, tax_total, gross_total, memo, posted_at,
+       payment_type, salesman_id, reference, to_deliver, source_document_id)
+    values
+      (${companyId}, 'SALES_INVOICE', ${docNo}, ${fiscalYear}, ${docDate}::date,
+       ${docDate}::date, ${dueDate}, ${partnerId}, ${locationId}, 'MMK', 1, 'POSTED',
+       ${netTotal}, 0, ${netTotal}, ${input.memo ?? null}, now(),
+       ${input.paymentType ?? "CREDIT"}, ${input.salesmanId ?? null},
+       ${input.reference ?? null}, ${input.toDeliver ?? false}, ${input.deliveryId ?? null})
+    returning id`;
+
+  const journal: JournalLine[] = [];
+  let lineNo = 0;
+
+  for (const line of input.lines) {
+    lineNo++;
+
+    const [item] = await tx`
+      select id, code, name, is_stocked, base_uom_id from item where id = ${line.itemId}`;
+    if (!item) throw new Error("Item not found");
+
+    const net = line.focReasonId ? 0 : round4(line.qty * line.unitPrice);
+
+    await tx`
+      insert into document_line
+        (company_id, document_id, line_no, item_id, location_id,
+         entered_qty, entered_uom_id, base_qty, unit_price,
+         net_amount, tax_amount, gross_amount, foc_reason_id)
+      values
+        (${companyId}, ${doc.id}, ${lineNo}, ${line.itemId}, ${locationId},
+         ${line.qty}, ${item.base_uom_id}, ${line.qty},
+         ${line.focReasonId ? 0 : line.unitPrice},
+         ${net}, 0, ${net}, ${line.focReasonId ?? null})`;
+
+    // Revenue only — stock and COGS belong to the delivery, not the invoice.
+    if (net !== 0) {
+      const revenue = await tx`
+        select fn_resolve_account_for_item(${companyId}, 'REVENUE', ${line.itemId}) as a`;
+      journal.push({ accountId: revenue[0].a, amount: -net });
+    }
+  }
+
+  if (netTotal !== 0) {
+    const ar = await tx`
+      select fn_resolve_control_account(${companyId}, 'AR_CONTROL', ${partnerId}) as a`;
+    journal.push({ accountId: ar[0].a, amount: netTotal, partnerId });
+  }
+
+  const entryId = await writeJournal(
+    tx, companyId, docDate, "SALES_INVOICE", doc.id, `${docNo} sales invoice`, journal
+  );
+
+  await tx`update document set journal_entry_id = ${entryId} where id = ${doc.id}`;
+
+  // Money taken at the counter becomes a real receipt document allocated to
+  // this invoice, rather than a number on the invoice header. That is what
+  // keeps the receivable an open item: a part payment leaves the balance
+  // attached to this specific invoice instead of vanishing into a total.
+  let receiptNo: string | null = null;
+
+  if (cashIn > 0) {
+    if (cashIn > netTotal) {
+      throw new Error(
+        `Cash in (${cashIn}) is more than the invoice total (${netTotal})`
+      );
+    }
+
+    const rcNoRows = await tx`
+      select fn_next_document_no(${companyId}, 'CUSTOMER_RECEIPT', ${fiscalYear}::uuid) as no`;
+    receiptNo = rcNoRows[0].no;
+
+    const [receipt] = await tx`
       insert into document
-        (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date, due_date,
+        (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date,
          partner_id, location_id, currency, exchange_rate, status,
          net_total, tax_total, gross_total, memo, posted_at,
-         payment_type, salesman_id, reference, to_deliver)
+         source_document_id, payment_type, salesman_id)
       values
-        (${companyId}, 'SALES_INVOICE', ${docNo}, ${fiscalYear}, ${docDate}::date,
-         ${docDate}::date, ${dueDate}, ${partnerId}, ${locationId}, 'MMK', 1, 'POSTED',
-         ${netTotal}, 0, ${netTotal}, ${input.memo ?? null}, now(),
-         ${input.paymentType ?? "CREDIT"}, ${input.salesmanId ?? null},
-         ${input.reference ?? null}, ${input.toDeliver ?? false})
+        (${companyId}, 'CUSTOMER_RECEIPT', ${receiptNo}, ${fiscalYear}, ${docDate}::date,
+         ${docDate}::date, ${partnerId}, ${locationId}, 'MMK', 1, 'POSTED',
+         ${cashIn}, 0, ${cashIn}, ${`Cash received against ${docNo}`}, now(),
+         ${doc.id}, 'CASH', ${input.salesmanId ?? null})
       returning id`;
 
-    const journal: JournalLine[] = [];
-    let lineNo = 0;
+    await tx`
+      insert into payment_allocation
+        (company_id, payment_id, invoice_id, amount, base_amount)
+      values (${companyId}, ${receipt.id}, ${doc.id}, ${cashIn}, ${cashIn})`;
 
-    for (const line of input.lines) {
-      lineNo++;
+    const ar = await tx`
+      select fn_resolve_control_account(${companyId}, 'AR_CONTROL', ${partnerId}) as a`;
 
-      const [item] = await tx`
-        select id, code, name, is_stocked, base_uom_id from item where id = ${line.itemId}`;
-      if (!item) throw new Error("Item not found");
-
-      const net = line.focReasonId ? 0 : round4(line.qty * line.unitPrice);
-
-      await tx`
-        insert into document_line
-          (company_id, document_id, line_no, item_id, location_id,
-           entered_qty, entered_uom_id, base_qty, unit_price,
-           net_amount, tax_amount, gross_amount, foc_reason_id)
-        values
-          (${companyId}, ${doc.id}, ${lineNo}, ${line.itemId}, ${locationId},
-           ${line.qty}, ${item.base_uom_id}, ${line.qty},
-           ${line.focReasonId ? 0 : line.unitPrice},
-           ${net}, 0, ${net}, ${line.focReasonId ?? null})`;
-
-      if (!item.is_stocked) {
-        // A service line: revenue only, nothing leaves the warehouse.
-        if (net !== 0) {
-          const revenue = await tx`
-            select fn_resolve_account_for_item(${companyId}, 'REVENUE', ${line.itemId}) as a`;
-          journal.push({ accountId: revenue[0].a, amount: -net });
-        }
-        continue;
-      }
-
-      // Cost is the moving average at this moment, frozen onto the movement.
-      // Recomputing it later would silently restate closed periods.
-      const costRows = await tx`
-        select fn_moving_average_cost(${companyId}, ${line.itemId}) as cost,
-               fn_qty_on_hand(${companyId}, ${line.itemId}, ${locationId}) as on_hand`;
-
-      const unitCost = Number(costRows[0].cost);
-      const onHand = Number(costRows[0].on_hand);
-
-      if (onHand < line.qty) {
-        throw new Error(
-          `Not enough ${item.code} (${item.name}) at this location — ` +
-            `${onHand} on hand, ${line.qty} requested`
-        );
-      }
-
-      const totalCost = round4(unitCost * line.qty);
-
-      await tx`
-        insert into stock_movement
-          (company_id, item_id, location_id, movement_date, qty,
-           unit_cost, total_cost, document_id)
-        values
-          (${companyId}, ${line.itemId}, ${locationId}, ${docDate}::date,
-           ${-line.qty}, ${unitCost}, ${-totalCost}, ${doc.id})`;
-
-      const inventory = await tx`
-        select fn_resolve_account_for_item(${companyId}, 'INVENTORY', ${line.itemId}) as a`;
-      journal.push({ accountId: inventory[0].a, amount: -totalCost, locationId });
-
-      if (line.focReasonId) {
-        const [foc] = await tx`select account_id from foc_reason where id = ${line.focReasonId}`;
-        journal.push({ accountId: foc.account_id, amount: totalCost, locationId });
-      } else {
-        const cogs = await tx`
-          select fn_resolve_account_for_item(${companyId}, 'COGS', ${line.itemId}) as a`;
-        journal.push({ accountId: cogs[0].a, amount: totalCost, locationId });
-
-        const revenue = await tx`
-          select fn_resolve_account_for_item(${companyId}, 'REVENUE', ${line.itemId}) as a`;
-        journal.push({ accountId: revenue[0].a, amount: -net });
-      }
-    }
-
-    if (netTotal !== 0) {
-      const ar = await tx`
-        select fn_resolve_control_account(${companyId}, 'AR_CONTROL', ${partnerId}) as a`;
-      journal.push({ accountId: ar[0].a, amount: netTotal, partnerId });
-    }
-
-    const entryId = await writeJournal(
-      tx, companyId, docDate, "SALES_INVOICE", doc.id, `${docNo} sales invoice`, journal
+    const receiptEntry = await writeJournal(
+      tx, companyId, docDate, "CUSTOMER_RECEIPT", receipt.id,
+      `${receiptNo} against ${docNo}`,
+      [
+        { accountId: input.cashAccountId as string, amount: cashIn },
+        { accountId: ar[0].a, amount: -cashIn, partnerId },
+      ]
     );
 
-    await tx`update document set journal_entry_id = ${entryId} where id = ${doc.id}`;
+    await tx`update document set journal_entry_id = ${receiptEntry} where id = ${receipt.id}`;
+  }
 
-    // Money taken at the counter becomes a real receipt document allocated to
-    // this invoice, rather than a number on the invoice header. That is what
-    // keeps the receivable an open item: a part payment leaves the balance
-    // attached to this specific invoice instead of vanishing into a total.
-    let receiptNo: string | null = null;
+  return { id: doc.id as string, docNo: docNo as string, receiptNo };
+}
 
-    if (cashIn > 0) {
-      if (cashIn > netTotal) {
-        throw new Error(
-          `Cash in (${cashIn}) is more than the invoice total (${netTotal})`
-        );
-      }
+export async function postSalesInvoice(input: SalesInvoiceInput & { deliveryId?: string | null }) {
+  return sql.begin((tx) => _postSalesInvoice(tx, input));
+}
 
-      const rcNoRows = await tx`
-        select fn_next_document_no(${companyId}, 'CUSTOMER_RECEIPT', ${fiscalYear}::uuid) as no`;
-      receiptNo = rcNoRows[0].no;
+/**
+ * The common case: sell it and it leaves right now. Posts a delivery for
+ * every stocked line and the invoice in the same transaction, so the two
+ * documents that theory says are separate never exist independently of one
+ * another for a counter sale — either both post or neither does.
+ */
+export async function postSaleWithDelivery(input: SalesInvoiceInput) {
+  if (input.lines.length === 0) throw new Error("An invoice needs at least one line");
 
-      const [receipt] = await tx`
-        insert into document
-          (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date,
-           partner_id, location_id, currency, exchange_rate, status,
-           net_total, tax_total, gross_total, memo, posted_at,
-           source_document_id, payment_type, salesman_id)
-        values
-          (${companyId}, 'CUSTOMER_RECEIPT', ${receiptNo}, ${fiscalYear}, ${docDate}::date,
-           ${docDate}::date, ${partnerId}, ${locationId}, 'MMK', 1, 'POSTED',
-           ${cashIn}, 0, ${cashIn}, ${`Cash received against ${docNo}`}, now(),
-           ${doc.id}, 'CASH', ${input.salesmanId ?? null})
-        returning id`;
+  return sql.begin(async (tx) => {
+    const itemIds = input.lines.map((l) => l.itemId);
+    const flags = await tx`select id, is_stocked from item where id = any(${itemIds})`;
+    const stocked = new Set(flags.filter((r: any) => r.is_stocked).map((r: any) => r.id));
+    const toDeliver = input.lines.filter((l) => stocked.has(l.itemId));
 
-      await tx`
-        insert into payment_allocation
-          (company_id, payment_id, invoice_id, amount, base_amount)
-        values (${companyId}, ${receipt.id}, ${doc.id}, ${cashIn}, ${cashIn})`;
-
-      const ar = await tx`
-        select fn_resolve_control_account(${companyId}, 'AR_CONTROL', ${partnerId}) as a`;
-
-      const receiptEntry = await writeJournal(
-        tx, companyId, docDate, "CUSTOMER_RECEIPT", receipt.id,
-        `${receiptNo} against ${docNo}`,
-        [
-          { accountId: input.cashAccountId as string, amount: cashIn },
-          { accountId: ar[0].a, amount: -cashIn, partnerId },
-        ]
-      );
-
-      await tx`update document set journal_entry_id = ${receiptEntry} where id = ${receipt.id}`;
+    let deliveryId: string | undefined;
+    if (toDeliver.length > 0) {
+      const delivery = await _postDelivery(tx, {
+        companyId: input.companyId,
+        partnerId: input.partnerId,
+        locationId: input.locationId,
+        docDate: input.docDate,
+        memo: input.memo,
+        reference: input.reference,
+        lines: toDeliver.map((l) => ({ itemId: l.itemId, qty: l.qty, focReasonId: l.focReasonId })),
+      });
+      deliveryId = delivery.id;
     }
 
-    return { id: doc.id as string, docNo: docNo as string, receiptNo };
+    return _postSalesInvoice(tx, { ...input, deliveryId });
   });
 }
 
 /**
- * Purchase invoice: stock arrives at the price paid, and the supplier is owed.
+ * Goods receipt: stock arrives at the price paid. This is the only
+ * purchase-side document that moves inventory.
  *
- *   Dr Inventory / Cr Accounts Payable
+ *   Dr Inventory / Cr GR/IR Clearing
  *
- * The receipt and the bill are one event here, so this posts straight to
- * payables rather than through GR/IR clearing.
+ * The bill hasn't necessarily arrived yet — that's exactly what GR/IR
+ * clearing holds open until it does.
  */
-export async function postPurchaseInvoice(input: InvoiceInput) {
+async function _postGoodsReceipt(tx: TransactionSql, input: FulfillmentInput) {
+  if (input.lines.length === 0) throw new Error("A goods receipt needs at least one line");
+
+  const { companyId, partnerId, locationId, docDate } = input;
+
+  const fyRows = await tx`select fn_fiscal_year_for(${companyId}, ${docDate}::date) as fy`;
+  const fiscalYear = fyRows[0]?.fy ?? null;
+  if (!fiscalYear) throw new Error(`No fiscal year covers ${docDate}`);
+
+  const noRows = await tx`
+    select fn_next_document_no(${companyId}, 'GOODS_RECEIPT', ${fiscalYear}::uuid) as no`;
+  const docNo = noRows[0].no;
+
+  const netTotal = round4(input.lines.reduce((s, l) => s + l.qty * (l.unitCost ?? 0), 0));
+
+  const [doc] = await tx`
+    insert into document
+      (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date,
+       partner_id, location_id, currency, exchange_rate, status,
+       net_total, tax_total, gross_total, memo, posted_at, reference, source_document_id)
+    values
+      (${companyId}, 'GOODS_RECEIPT', ${docNo}, ${fiscalYear}, ${docDate}::date,
+       ${docDate}::date, ${partnerId}, ${locationId}, 'MMK', 1, 'POSTED',
+       ${netTotal}, 0, ${netTotal}, ${input.memo ?? null}, now(), ${input.reference ?? null},
+       ${input.sourceDocumentId ?? null})
+    returning id`;
+
+  const journal: JournalLine[] = [];
+  let lineNo = 0;
+
+  for (const line of input.lines) {
+    lineNo++;
+
+    const [item] = await tx`select id, code, name, is_stocked, base_uom_id from item where id = ${line.itemId}`;
+    if (!item) throw new Error("Item not found");
+    if (!item.is_stocked) throw new Error(`${item.code} (${item.name}) is not stocked and cannot be received`);
+
+    const unitCost = line.unitCost ?? 0;
+    const net = round4(line.qty * unitCost);
+
+    await tx`
+      insert into document_line
+        (company_id, document_id, line_no, item_id, location_id,
+         entered_qty, entered_uom_id, base_qty, unit_price,
+         net_amount, tax_amount, gross_amount, source_line_id)
+      values
+        (${companyId}, ${doc.id}, ${lineNo}, ${line.itemId}, ${locationId},
+         ${line.qty}, ${item.base_uom_id}, ${line.qty}, ${unitCost},
+         ${net}, 0, ${net}, ${line.sourceLineId ?? null})`;
+
+    await tx`
+      insert into stock_movement
+        (company_id, item_id, location_id, movement_date, qty,
+         unit_cost, total_cost, document_id)
+      values
+        (${companyId}, ${line.itemId}, ${locationId}, ${docDate}::date,
+         ${line.qty}, ${unitCost}, ${net}, ${doc.id})`;
+
+    const inventory = await tx`
+      select fn_resolve_account_for_item(${companyId}, 'INVENTORY', ${line.itemId}) as a`;
+    journal.push({ accountId: inventory[0].a, amount: net, locationId });
+  }
+
+  const grir = await tx`select fn_system_account(${companyId}, 'GRIR_CLEARING') as a`;
+  journal.push({ accountId: grir[0].a, amount: -netTotal, partnerId });
+
+  const entryId = await writeJournal(
+    tx, companyId, docDate, "GOODS_RECEIPT", doc.id, `${docNo} goods receipt`, journal
+  );
+  await tx`update document set journal_entry_id = ${entryId} where id = ${doc.id}`;
+
+  return { id: doc.id as string, docNo: docNo as string };
+}
+
+export async function postGoodsReceipt(input: FulfillmentInput) {
+  return sql.begin((tx) => _postGoodsReceipt(tx, input));
+}
+
+/**
+ * Purchase invoice: the supplier is owed. Stock does not move here.
+ *
+ * Matched to a receipt: Dr GR/IR Clearing for what the receipt valued the
+ * goods at, plus/minus a price variance for whatever the bill disagrees
+ * with that by, Cr Accounts Payable for the full bill.
+ *
+ * Not matched to any receipt (the bill arrived first): Dr GR/IR Clearing for
+ * the full amount, which then sits there — same as an unmatched receipt —
+ * until a receipt eventually clears it.
+ */
+async function _postPurchaseInvoice(
+  tx: TransactionSql,
+  input: InvoiceInput & { goodsReceiptId?: string | null }
+) {
+  if (input.lines.length === 0) throw new Error("An invoice needs at least one line");
+
+  const { companyId, partnerId, locationId, docDate, dueDate } = input;
+
+  const fyRows = await tx`select fn_fiscal_year_for(${companyId}, ${docDate}::date) as fy`;
+  const fiscalYear = fyRows[0]?.fy ?? null;
+  if (!fiscalYear) throw new Error(`No fiscal year covers ${docDate}`);
+
+  const noRows = await tx`
+    select fn_next_document_no(${companyId}, 'PURCHASE_INVOICE', ${fiscalYear}::uuid) as no`;
+  const docNo = noRows[0].no;
+
+  const netTotal = round4(input.lines.reduce((s, l) => s + l.qty * l.unitPrice, 0));
+
+  const [doc] = await tx`
+    insert into document
+      (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date, due_date,
+       partner_id, location_id, currency, exchange_rate, status,
+       net_total, tax_total, gross_total, memo, posted_at, source_document_id)
+    values
+      (${companyId}, 'PURCHASE_INVOICE', ${docNo}, ${fiscalYear}, ${docDate}::date,
+       ${docDate}::date, ${dueDate}, ${partnerId}, ${locationId}, 'MMK', 1, 'POSTED',
+       ${netTotal}, 0, ${netTotal}, ${input.memo ?? null}, now(), ${input.goodsReceiptId ?? null})
+    returning id`;
+
+  const journal: JournalLine[] = [];
+  let lineNo = 0;
+  let stockedNet = 0;
+
+  for (const line of input.lines) {
+    lineNo++;
+
+    const [item] = await tx`
+      select id, is_stocked, base_uom_id from item where id = ${line.itemId}`;
+    if (!item) throw new Error("Item not found");
+
+    const net = round4(line.qty * line.unitPrice);
+
+    await tx`
+      insert into document_line
+        (company_id, document_id, line_no, item_id, location_id,
+         entered_qty, entered_uom_id, base_qty, unit_price,
+         net_amount, tax_amount, gross_amount)
+      values
+        (${companyId}, ${doc.id}, ${lineNo}, ${line.itemId}, ${locationId},
+         ${line.qty}, ${item.base_uom_id}, ${line.qty}, ${line.unitPrice},
+         ${net}, 0, ${net})`;
+
+    if (item.is_stocked) {
+      // Cleared against GR/IR below, once for the whole invoice — a single
+      // matched or unmatched settlement reads far clearer than one per line.
+      stockedNet += net;
+    } else {
+      // A service or charge line goes straight to expense via its item group.
+      const cogs = await tx`
+        select fn_resolve_account_for_item(${companyId}, 'COGS', ${line.itemId}) as a`;
+      journal.push({ accountId: cogs[0].a, amount: net, locationId });
+    }
+  }
+  stockedNet = round4(stockedNet);
+
+  if (stockedNet !== 0) {
+    let grirAmount = stockedNet;
+
+    if (input.goodsReceiptId) {
+      const [gr] = await tx`
+        select coalesce(sum(net_amount), 0) as total from document_line
+         where document_id = ${input.goodsReceiptId}`;
+      const receivedValue = round4(Number(gr.total));
+      const variance = round4(stockedNet - receivedValue);
+
+      if (variance !== 0) {
+        const pv = await tx`select fn_system_account(${companyId}, 'PURCHASE_PRICE_VARIANCE') as a`;
+        journal.push({ accountId: pv[0].a, amount: variance, locationId });
+      }
+      grirAmount = receivedValue;
+    }
+
+    const grir = await tx`select fn_system_account(${companyId}, 'GRIR_CLEARING') as a`;
+    journal.push({ accountId: grir[0].a, amount: grirAmount, partnerId });
+  }
+
+  const ap = await tx`
+    select fn_resolve_control_account(${companyId}, 'AP_CONTROL', ${partnerId}) as a`;
+  journal.push({ accountId: ap[0].a, amount: -netTotal, partnerId });
+
+  const entryId = await writeJournal(
+    tx, companyId, docDate, "PURCHASE_INVOICE", doc.id, `${docNo} purchase invoice`, journal
+  );
+
+  await tx`update document set journal_entry_id = ${entryId} where id = ${doc.id}`;
+
+  return { id: doc.id as string, docNo: docNo as string };
+}
+
+export async function postPurchaseInvoice(input: InvoiceInput & { goodsReceiptId?: string | null }) {
+  return sql.begin((tx) => _postPurchaseInvoice(tx, input));
+}
+
+/** The purchase-side mirror of postSaleWithDelivery: receive it and bill it in one step. */
+export async function postPurchaseWithReceipt(input: InvoiceInput) {
   if (input.lines.length === 0) throw new Error("An invoice needs at least one line");
 
   return sql.begin(async (tx) => {
-    const { companyId, partnerId, locationId, docDate, dueDate } = input;
+    const itemIds = input.lines.map((l) => l.itemId);
+    const flags = await tx`select id, is_stocked from item where id = any(${itemIds})`;
+    const stocked = new Set(flags.filter((r: any) => r.is_stocked).map((r: any) => r.id));
+    const toReceive = input.lines.filter((l) => stocked.has(l.itemId));
 
-    const fyRows = await tx`select fn_fiscal_year_for(${companyId}, ${docDate}::date) as fy`;
-    const fiscalYear = fyRows[0]?.fy ?? null;
-    if (!fiscalYear) throw new Error(`No fiscal year covers ${docDate}`);
-
-    const noRows = await tx`
-      select fn_next_document_no(${companyId}, 'PURCHASE_INVOICE', ${fiscalYear}::uuid) as no`;
-    const docNo = noRows[0].no;
-
-    const netTotal = round4(input.lines.reduce((s, l) => s + l.qty * l.unitPrice, 0));
-
-    const [doc] = await tx`
-      insert into document
-        (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date, due_date,
-         partner_id, location_id, currency, exchange_rate, status,
-         net_total, tax_total, gross_total, memo, posted_at)
-      values
-        (${companyId}, 'PURCHASE_INVOICE', ${docNo}, ${fiscalYear}, ${docDate}::date,
-         ${docDate}::date, ${dueDate}, ${partnerId}, ${locationId}, 'MMK', 1, 'POSTED',
-         ${netTotal}, 0, ${netTotal}, ${input.memo ?? null}, now())
-      returning id`;
-
-    const journal: JournalLine[] = [];
-    let lineNo = 0;
-
-    for (const line of input.lines) {
-      lineNo++;
-
-      const [item] = await tx`
-        select id, code, is_stocked, base_uom_id from item where id = ${line.itemId}`;
-      if (!item) throw new Error("Item not found");
-
-      const net = round4(line.qty * line.unitPrice);
-
-      await tx`
-        insert into document_line
-          (company_id, document_id, line_no, item_id, location_id,
-           entered_qty, entered_uom_id, base_qty, unit_price,
-           net_amount, tax_amount, gross_amount)
-        values
-          (${companyId}, ${doc.id}, ${lineNo}, ${line.itemId}, ${locationId},
-           ${line.qty}, ${item.base_uom_id}, ${line.qty}, ${line.unitPrice},
-           ${net}, 0, ${net})`;
-
-      if (item.is_stocked) {
-        await tx`
-          insert into stock_movement
-            (company_id, item_id, location_id, movement_date, qty,
-             unit_cost, total_cost, document_id)
-          values
-            (${companyId}, ${line.itemId}, ${locationId}, ${docDate}::date,
-             ${line.qty}, ${line.unitPrice}, ${net}, ${doc.id})`;
-
-        const inventory = await tx`
-          select fn_resolve_account_for_item(${companyId}, 'INVENTORY', ${line.itemId}) as a`;
-        journal.push({ accountId: inventory[0].a, amount: net, locationId });
-      } else {
-        // A service or charge line goes straight to expense via its item group.
-        const cogs = await tx`
-          select fn_resolve_account_for_item(${companyId}, 'COGS', ${line.itemId}) as a`;
-        journal.push({ accountId: cogs[0].a, amount: net, locationId });
-      }
+    let goodsReceiptId: string | undefined;
+    if (toReceive.length > 0) {
+      const gr = await _postGoodsReceipt(tx, {
+        companyId: input.companyId,
+        partnerId: input.partnerId,
+        locationId: input.locationId,
+        docDate: input.docDate,
+        memo: input.memo,
+        reference: input.reference,
+        lines: toReceive.map((l) => ({ itemId: l.itemId, qty: l.qty, unitCost: l.unitPrice })),
+      });
+      goodsReceiptId = gr.id;
     }
 
-    const ap = await tx`
-      select fn_resolve_control_account(${companyId}, 'AP_CONTROL', ${partnerId}) as a`;
-    journal.push({ accountId: ap[0].a, amount: -netTotal, partnerId });
-
-    const entryId = await writeJournal(
-      tx, companyId, docDate, "PURCHASE_INVOICE", doc.id, `${docNo} purchase invoice`, journal
-    );
-
-    await tx`update document set journal_entry_id = ${entryId} where id = ${doc.id}`;
-
-    return { id: doc.id as string, docNo: docNo as string };
+    return _postPurchaseInvoice(tx, { ...input, goodsReceiptId });
   });
 }
 

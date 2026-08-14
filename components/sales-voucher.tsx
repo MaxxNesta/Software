@@ -79,6 +79,7 @@ export function SalesVoucher({
   const [paymentType, setPaymentType] = useState<"CASH" | "CREDIT">("CREDIT");
   const [cashIn, setCashIn] = useState("");
   const [showRemark, setShowRemark] = useState(false);
+  const [toDeliver, setToDeliver] = useState(false);
   const [tab, setTab] = useState<"invoices" | "promotions">("invoices");
 
   const byId = (id: string) => items.find((i) => i.id === id);
@@ -195,11 +196,15 @@ export function SalesVoucher({
   );
 
   // Availability must cover the free units too — they leave the warehouse.
-  const shortages = lines.filter((l) => {
-    if (!l.itemId) return false;
-    const item = byId(l.itemId);
-    return item?.is_stocked && Number(l.qty) + freeQty(l) > Number(item.on_hand);
-  });
+  // Only matters when goods leave now; a deferred delivery doesn't touch
+  // stock at invoice time, so nothing to check against yet.
+  const shortages = toDeliver
+    ? []
+    : lines.filter((l) => {
+        if (!l.itemId) return false;
+        const item = byId(l.itemId);
+        return item?.is_stocked && Number(l.qty) + freeQty(l) > Number(item.on_hand);
+      });
 
   const customerInvoices = useMemo(
     () => openInvoices.filter((i) => i.partner_id === customerId),
@@ -317,7 +322,7 @@ export function SalesVoucher({
               {lines.flatMap((l) => {
                 const item = byId(l.itemId);
                 const free = freeQty(l);
-                const short = item?.is_stocked && Number(l.qty) + free > Number(item.on_hand);
+                const short = !toDeliver && item?.is_stocked && Number(l.qty) + free > Number(item.on_hand);
                 const promo = promoFor(l.itemId);
 
                 const freeRow =
@@ -412,11 +417,13 @@ export function SalesVoucher({
 
             <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem", marginTop: "1rem" }}>
               <label className="check" htmlFor="to_deliver">
-                <input id="to_deliver" name="to_deliver" type="checkbox" />
+                <input id="to_deliver" name="to_deliver" type="checkbox"
+                  checked={toDeliver} onChange={(e) => setToDeliver(e.target.checked)} />
                 To deliver — goods leave later
               </label>
               <span className="hint">
-                A warehouse flag only. Stock and the posting are the same either way.
+                Checked: this posts revenue only, and stock leaves later from{" "}
+                Sales → Deliveries. Unchecked: delivery and invoice post together, now.
               </span>
             </div>
 
