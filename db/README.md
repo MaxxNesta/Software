@@ -48,6 +48,21 @@ Correctness that lives only in application code is correctness that a
 background job, a bulk import, or next year's developer will eventually
 bypass.
 
+## schema.sql
+
+`schema.sql` is a generated snapshot of the whole structure in one file —
+tables, views, functions and triggers as they currently stand. Useful for
+reading, for handing to a DBA, or for diffing after a migration.
+
+It is **not** how the database gets built. The migrations are, and they run
+in order. Regenerate the snapshot after adding one:
+
+```bash
+pg_dump -h 127.0.0.1 -p 5433 -U erp_dev -d myanmar_erp_dev   --schema-only --no-owner --no-privileges -f db/schema.sql
+```
+
+Never edit it by hand.
+
 ## Files
 
 | | |
