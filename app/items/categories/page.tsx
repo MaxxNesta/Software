@@ -73,9 +73,7 @@ export default async function CategoriesRoot() {
                         <td className="r">{counts.childrenOf(g.id) || ""}</td>
                         <td className="r">{total || ""}</td>
                         <td>
-                          <Link href={`/items/categories/${g.id}`}>
-                            <button type="button" className="ghost tiny">Open &rarr;</button>
-                          </Link>
+                          <Link href={`/items/categories/${g.id}`} className="btn ghost tiny">Open &rarr;</Link>
                         </td>
                       </tr>
                     );

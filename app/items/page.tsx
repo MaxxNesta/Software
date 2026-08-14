@@ -104,8 +104,8 @@ export default async function Items() {
       </div>
 
       <div className="actions">
-        <Link href="/items/categories"><button type="button" className="ghost">Manage categories</button></Link>
-        <Link href="/items/new"><button type="button">+ Item</button></Link>
+        <Link href="/items/categories" className="btn ghost">Manage categories</Link>
+        <Link href="/items/new" className="btn">+ Item</Link>
       </div>
 
       <section>

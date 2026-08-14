@@ -339,3 +339,24 @@ button.tiny { padding: 0.16rem 0.5rem; font-size: 0.78rem; }
   .navhead { display: none; }
   .navitems { flex-direction: row; padding-bottom: 0; }
 }
+
+/* A link that looks like a button. Nesting a <button> inside an <a> is
+   invalid HTML: the button captures the click and type="button" does
+   nothing, so the link never navigates. */
+
+a.btn {
+  display: inline-block;
+  font-family: inherit; font-size: 0.88rem; font-weight: 500;
+  color: var(--surface); background: var(--dr);
+  border: 1px solid var(--dr); border-radius: 3px;
+  padding: 0.46rem 1rem; cursor: pointer;
+  transition: opacity 150ms;
+  text-decoration: none;
+}
+a.btn:hover { opacity: 0.88; }
+a.btn:focus-visible { outline: 2px solid var(--dr); outline-offset: 2px; }
+
+a.btn.ghost { color: var(--ink-soft); background: transparent; border-color: var(--line); }
+a.btn.ghost:hover { background: var(--line-soft); opacity: 1; }
+
+a.btn.tiny { padding: 0.16rem 0.5rem; font-size: 0.78rem; }

@@ -23,7 +23,7 @@ export default async function Payables() {
             <h2>Open bills</h2>
             <span className="actions">
               <span className="page-sub">{items.length} outstanding</span>
-              <Link href="/payables/pay"><button type="button">Pay supplier</button></Link>
+              <Link href="/payables/pay" className="btn">Pay supplier</Link>
             </span>
           </div>
           <div className="tablewrap">

@@ -25,7 +25,7 @@ export default async function Partners() {
             <h2>Partners</h2>
             <span className="actions">
               <span className="page-sub">{partners.length} records</span>
-              <Link href="/partners/new"><button type="button">New partner</button></Link>
+              <Link href="/partners/new" className="btn">New partner</Link>
             </span>
           </div>
           <div className="tablewrap">

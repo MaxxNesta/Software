@@ -91,7 +91,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                       everything the ledger needs before anything can be recorded.
                     </p>
                     <div className="actions" style={{ marginTop: "1rem" }}>
-                      <Link href="/setup"><button type="button">Set up your company</button></Link>
+                      <Link href="/setup" className="btn">Set up your company</Link>
                     </div>
                   </div>
                 </div>
