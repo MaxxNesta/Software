@@ -376,7 +376,7 @@ export async function createBrandInline(
       returning id, code, name`;
 
     revalidatePath("/items/brands");
-    return { ok: true, brand };
+    return { ok: true, brand: { id: brand.id, code: brand.code, name: brand.name } };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
