@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { sql } from "./db";
+import { scaffoldCompany } from "./setup";
 import {
   postSalesInvoice, postPurchaseInvoice,
   postSupplierPayment, postCustomerReceipt,
@@ -26,6 +27,43 @@ async function companyId(): Promise<string> {
   const [c] = await sql`select id from company order by created_at limit 1`;
   if (!c) throw new Error("No company is set up");
   return c.id;
+}
+
+// ------------------------------------------------------------ first run --
+
+export async function setupCompany(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const name = str(fd, "name");
+    const code = str(fd, "code").toUpperCase();
+    const month = num(fd, "fiscal_year_start_month");
+    const start = str(fd, "fiscal_year_start");
+
+    if (!name) return { error: "Company name is required" };
+    if (!code) return { error: "A short code is required" };
+    if (!start) return { error: "Choose when the financial year starts" };
+    if (month < 1 || month > 12) return { error: "Financial year start month must be 1 to 12" };
+
+    await scaffoldCompany({
+      code,
+      name,
+      nameMy: str(fd, "name_my") || null,
+      baseCurrency: str(fd, "base_currency") || "MMK",
+      fiscalYearStartMonth: month,
+      fiscalYearStart: start,
+      branchName: str(fd, "branch_name") || "Head Office",
+      warehouseName: str(fd, "warehouse_name") || "Main Warehouse",
+    });
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/", "layout");
+  redirect("/items/categories");
+}
+
+export async function companyExists(): Promise<boolean> {
+  const rows = await sql`select 1 from company limit 1`;
+  return rows.length > 0;
 }
 
 // --------------------------------------------------------------- partners --

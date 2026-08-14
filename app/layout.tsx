@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import Link from "next/link";
 import { getCompany } from "@/lib/queries";
 import { NavLink, NavGroup } from "./nav";
 
@@ -27,7 +28,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <nav className="sidebar">
             <div className="brand">
               <span className="brand-name">{company?.name ?? "Myanmar ERP"}</span>
-              <span className="brand-sub">{company?.base_currency ?? "—"} · FY 2026-27</span>
+              <span className="brand-sub">{company?.base_currency ?? "not set up"}</span>
             </div>
 
             <NavGroup label="Overview" match={["/", "/ledger"]}>
@@ -78,6 +79,20 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                       from this environment.
                     </p>
                     <p className="m" style={{ color: "var(--bad)", marginTop: "0.75rem" }}>{dbError}</p>
+                  </div>
+                </div>
+              ) : !company ? (
+                <div className="card">
+                  <div className="card-head"><h2>Nothing set up yet</h2></div>
+                  <div className="card-body">
+                    <p className="page-sub">
+                      This database is empty. Creating a company builds the chart of
+                      accounts, the financial calendar and the posting rules &mdash;
+                      everything the ledger needs before anything can be recorded.
+                    </p>
+                    <div className="actions" style={{ marginTop: "1rem" }}>
+                      <Link href="/setup"><button type="button">Set up your company</button></Link>
+                    </div>
                   </div>
                 </div>
               ) : (
