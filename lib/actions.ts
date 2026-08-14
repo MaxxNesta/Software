@@ -963,3 +963,208 @@ export async function getFormData() {
     nextInvoiceNo: (nextNo[0]?.no as string) ?? "SI-000001",
   };
 }
+
+// ---------------------------------------------------------- warehouses --
+
+/** True (23503) when a delete failed because something still references the row. */
+function isForeignKeyViolation(e: unknown): boolean {
+  return typeof e === "object" && e !== null && (e as { code?: string }).code === "23503";
+}
+
+export async function createLocation(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+
+    const code = str(fd, "code").toUpperCase();
+    const name = str(fd, "name");
+    const parentId = str(fd, "parent_id") || null;
+
+    if (!code) return { error: "Code is required" };
+    if (!name) return { error: "Name is required" };
+
+    const dup = await sql`select 1 from location where company_id = ${co} and code = ${code}`;
+    if (dup.length) return { error: `Code ${code} is already used` };
+
+    await sql`
+      insert into location (company_id, parent_id, code, name, name_my, is_stock_location)
+      values (${co}, ${parentId}, ${code}, ${name}, ${str(fd, "name_my") || null},
+              ${fd.get("is_stock_location") === "on"})`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/warehouses");
+  redirect("/warehouses");
+}
+
+export async function updateLocation(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+
+    const id = str(fd, "id");
+    const code = str(fd, "code").toUpperCase();
+    const name = str(fd, "name");
+    const parentId = str(fd, "parent_id") || null;
+
+    if (!id) return { error: "Choose a warehouse" };
+    if (!code) return { error: "Code is required" };
+    if (!name) return { error: "Name is required" };
+    if (parentId === id) return { error: "A warehouse cannot sit under itself" };
+
+    if (parentId) {
+      const cycle = await sql`
+        with recursive descendants as (
+          select id from location where id = ${id} and company_id = ${co}
+          union all
+          select l.id from location l join descendants d on l.parent_id = d.id
+        )
+        select 1 from descendants where id = ${parentId}`;
+      if (cycle.length) return { error: "That would put it inside its own branch" };
+    }
+
+    const dup = await sql`
+      select 1 from location where company_id = ${co} and code = ${code} and id <> ${id}`;
+    if (dup.length) return { error: `Code ${code} is already used` };
+
+    await sql`
+      update location set
+        code = ${code}, name = ${name}, name_my = ${str(fd, "name_my") || null},
+        parent_id = ${parentId}, is_stock_location = ${fd.get("is_stock_location") === "on"},
+        is_active = ${fd.get("is_active") === "on"}
+      where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/warehouses");
+  redirect("/warehouses");
+}
+
+/** Deactivates a warehouse without touching any history that points at it. */
+export async function deactivateLocation(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+    const id = str(fd, "id");
+    if (!id) return { error: "Choose a warehouse" };
+
+    await sql`update location set is_active = false where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/warehouses");
+  redirect("/warehouses");
+}
+
+/**
+ * Hard delete only succeeds for a warehouse nothing has ever touched —
+ * transactions are append-only, so a warehouse with history stays as a
+ * foreign key everywhere it was used. Deactivating is the way to retire one.
+ */
+export async function deleteLocation(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+    const id = str(fd, "id");
+    if (!id) return { error: "Choose a warehouse" };
+
+    await sql`delete from location where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    if (isForeignKeyViolation(e)) {
+      return { error: "This warehouse has documents or stock history against it — deactivate it instead of deleting" };
+    }
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/warehouses");
+  redirect("/warehouses");
+}
+
+// ------------------------------------------------------- salespersons --
+
+export async function createSalesman(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+
+    const code = str(fd, "code").toUpperCase();
+    const name = str(fd, "name");
+
+    if (!code) return { error: "Code is required" };
+    if (!name) return { error: "Name is required" };
+
+    const dup = await sql`select 1 from salesman where company_id = ${co} and code = ${code}`;
+    if (dup.length) return { error: `Code ${code} is already used` };
+
+    await sql`
+      insert into salesman (company_id, code, name, name_my, phone, location_id, commission_pct)
+      values (${co}, ${code}, ${name}, ${str(fd, "name_my") || null}, ${str(fd, "phone") || null},
+              ${str(fd, "location_id") || null}, ${num(fd, "commission_pct")})`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/salespersons");
+  redirect("/salespersons");
+}
+
+export async function updateSalesman(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+
+    const id = str(fd, "id");
+    const code = str(fd, "code").toUpperCase();
+    const name = str(fd, "name");
+
+    if (!id) return { error: "Choose a salesperson" };
+    if (!code) return { error: "Code is required" };
+    if (!name) return { error: "Name is required" };
+
+    const dup = await sql`
+      select 1 from salesman where company_id = ${co} and code = ${code} and id <> ${id}`;
+    if (dup.length) return { error: `Code ${code} is already used` };
+
+    await sql`
+      update salesman set
+        code = ${code}, name = ${name}, name_my = ${str(fd, "name_my") || null},
+        phone = ${str(fd, "phone") || null}, location_id = ${str(fd, "location_id") || null},
+        commission_pct = ${num(fd, "commission_pct")}, is_active = ${fd.get("is_active") === "on"}
+      where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/salespersons");
+  redirect("/salespersons");
+}
+
+export async function deactivateSalesman(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+    const id = str(fd, "id");
+    if (!id) return { error: "Choose a salesperson" };
+
+    await sql`update salesman set is_active = false where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/salespersons");
+  redirect("/salespersons");
+}
+
+export async function deleteSalesman(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+    const id = str(fd, "id");
+    if (!id) return { error: "Choose a salesperson" };
+
+    await sql`delete from salesman where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    if (isForeignKeyViolation(e)) {
+      return { error: "This salesperson has documents against them — deactivate instead of deleting" };
+    }
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/salespersons");
+  redirect("/salespersons");
+}

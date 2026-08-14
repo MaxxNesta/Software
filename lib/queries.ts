@@ -198,6 +198,27 @@ export async function getBrands(companyId: string) {
      order by name`;
 }
 
+export async function getLocations(companyId: string) {
+  return sql`
+    select l.id, l.code, l.name, l.name_my, l.parent_id, l.is_stock_location, l.is_active,
+           p.name as parent_name
+      from location l
+      left join location p on p.id = l.parent_id
+     where l.company_id = ${companyId}
+     order by l.code`;
+}
+
+export async function getSalesmen(companyId: string) {
+  return sql`
+    select s.id, s.code, s.name, s.name_my, s.phone, s.location_id,
+           s.commission_pct, s.is_active,
+           l.name as location_name
+      from salesman s
+      left join location l on l.id = s.location_id
+     where s.company_id = ${companyId}
+     order by s.code`;
+}
+
 /**
  * A trial balance lists each account's closing balance on the side it
  * naturally falls, and the two columns must agree — that agreement is the

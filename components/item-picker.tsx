@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { createItemInline, type PickerItem } from "@/lib/actions";
 
@@ -40,6 +40,7 @@ export function ItemPicker({
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const [rect, setRect] = useState<{ top: number; left: number; width: number } | null>(null);
 
   const selected = items.find((i) => i.id === value);
@@ -62,6 +63,30 @@ export function ItemPicker({
     return () => {
       window.removeEventListener("scroll", update, true);
       window.removeEventListener("resize", update);
+    };
+  }, [showPanel]);
+
+  // Since the panel now lives in a portal, it's outside boxRef in the DOM —
+  // closing has to check both the trigger and the panel itself, or every
+  // click on a result row would look like an "outside" click and close it
+  // before onPick ever fires.
+  useEffect(() => {
+    if (!showPanel) return;
+    function onPointerDown(e: PointerEvent) {
+      const target = e.target as globalThis.Node;
+      if (boxRef.current?.contains(target)) return;
+      if (panelRef.current?.contains(target)) return;
+      setOpen(false);
+      setCreating(false);
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") { setOpen(false); setCreating(false); }
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
     };
   }, [showPanel]);
 
@@ -146,7 +171,7 @@ export function ItemPicker({
       />
 
       {open && !creating && rect && createPortal(
-        <div className="picker" style={{ position: "fixed", top: rect.top, left: rect.left }}>
+        <div ref={panelRef} className="picker" style={{ position: "fixed", top: rect.top, left: rect.left }}>
           {matches.length > 0 ? (
             matches.map((i) => (
               <button
@@ -184,7 +209,7 @@ export function ItemPicker({
       )}
 
       {creating && rect && createPortal(
-        <div className="picker picker-form" style={{ position: "fixed", top: rect.top, left: rect.left }}>
+        <div ref={panelRef} className="picker picker-form" style={{ position: "fixed", top: rect.top, left: rect.left }}>
           <div className="picker-head">
             <strong>New item</strong>
             <button type="button" className="ghost tiny" onClick={() => setCreating(false)}>

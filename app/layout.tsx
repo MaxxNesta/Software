@@ -59,12 +59,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <NavLink href="/finance/bank-detail">Bank detail</NavLink>
             </NavGroup>
 
-            <NavGroup label="Master data" match={["/items", "/partners"]}>
+            <NavGroup label="Master data" match={["/items", "/partners", "/warehouses", "/salespersons"]}>
               <NavLink href="/items/categories">Categories</NavLink>
               <NavLink href="/items/subcategories">Sub category</NavLink>
               <NavLink href="/items" exact>Items</NavLink>
               <NavLink href="/items/stock">Stock</NavLink>
               <NavLink href="/partners">Partners</NavLink>
+              <NavLink href="/warehouses">Warehouses</NavLink>
+              <NavLink href="/salespersons">Salespersons</NavLink>
             </NavGroup>
 
           </nav>
