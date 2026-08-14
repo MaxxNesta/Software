@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState, useTransition } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
+import { createPortal } from "react-dom";
 import { createItemInline, type PickerItem } from "@/lib/actions";
 
 type Node = { id: string; code: string; segment: string; name: string; parent_id: string | null };
@@ -39,8 +40,30 @@ export function ItemPicker({
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
+  const [rect, setRect] = useState<{ top: number; left: number; width: number } | null>(null);
 
   const selected = items.find((i) => i.id === value);
+
+  const showPanel = open || creating;
+
+  // The dropdown is portalled to <body> and fixed-positioned so a scrollable
+  // ancestor (the line table's overflow-x wrapper) can't clip it. Track the
+  // input's position while the panel is open, including on scroll/resize —
+  // a plain child element would move with the table's own scrollbar.
+  useLayoutEffect(() => {
+    if (!showPanel || !boxRef.current) return;
+    const update = () => {
+      const r = boxRef.current!.getBoundingClientRect();
+      setRect({ top: r.bottom + 2, left: r.left, width: r.width });
+    };
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [showPanel]);
 
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -122,8 +145,8 @@ export function ItemPicker({
         aria-label="Find an item"
       />
 
-      {open && !creating && (
-        <div className="picker">
+      {open && !creating && rect && createPortal(
+        <div className="picker" style={{ position: "fixed", top: rect.top, left: rect.left }}>
           {matches.length > 0 ? (
             matches.map((i) => (
               <button
@@ -156,11 +179,12 @@ export function ItemPicker({
               + Create &ldquo;{query.trim()}&rdquo; as a new item
             </button>
           )}
-        </div>
+        </div>,
+        document.body
       )}
 
-      {creating && (
-        <div className="picker picker-form">
+      {creating && rect && createPortal(
+        <div className="picker picker-form" style={{ position: "fixed", top: rect.top, left: rect.left }}>
           <div className="picker-head">
             <strong>New item</strong>
             <button type="button" className="ghost tiny" onClick={() => setCreating(false)}>
@@ -219,7 +243,8 @@ export function ItemPicker({
             </button>
             {!groupId && <span className="hint">Choose a category</span>}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
