@@ -1,60 +1,55 @@
 import Link from "next/link";
-import { money } from "@/lib/db";
+import { money, qty } from "@/lib/db";
 import { getCompany, getItems } from "@/lib/queries";
 
 type Row = {
   id: string; code: string; name: string; name_my: string | null;
   item_group_id: string; group_name: string; parent_group_name: string | null;
-  brand_name: string | null; is_stocked: boolean;
-  uom_code: string; sale_price: string | null;
+  uom_code: string; qty_on_hand: string; value_on_hand: string; is_stocked: boolean;
 };
 
-export default async function Items() {
+export default async function Stock() {
   const company = await getCompany();
   if (!company) return <div className="empty">No company found.</div>;
 
   const items = (await getItems(company.id)) as unknown as Row[];
+  const stocked = items.filter((i) => i.is_stocked);
+  const totalValue = stocked.reduce((s, i) => s + Number(i.value_on_hand), 0);
 
   return (
     <>
       <div className="page-head">
         <span className="eyebrow">Master data</span>
-        <h1>Items</h1>
+        <h1>Stock</h1>
         <span className="page-sub">
-          Every product and service in the catalogue. Filed under a category
-          (and sub category, if it has one), with an optional brand.
+          On-hand quantity and value, summed live from the stock ledger &mdash;
+          there is no stored on-hand column that could drift.
         </span>
-      </div>
-
-      <div className="actions">
-        <Link href="/items/categories" className="btn ghost">Manage categories</Link>
-        <Link href="/items/brands" className="btn ghost">Manage brands</Link>
-        <Link href="/items/new" className="btn">+ Item</Link>
       </div>
 
       <section>
         <div className="card">
           <div className="card-head">
-            <h2>Catalogue</h2>
-            <span className="page-sub">{items.length} items</span>
+            <h2>On hand</h2>
+            <span className="page-sub">{stocked.length} stocked items</span>
           </div>
 
-          {items.length === 0 ? (
+          {stocked.length === 0 ? (
             <div className="empty">
-              Nothing yet. Start with a category, then add products inside it.{" "}
-              <Link href="/items/categories" style={{ color: "var(--dr)" }}>Add a category</Link>
+              No stocked items yet.{" "}
+              <Link href="/items" style={{ color: "var(--dr)" }}>Add an item</Link>
             </div>
           ) : (
             <div className="tablewrap">
               <table>
                 <thead>
                   <tr>
-                    <th>Code</th><th>Name</th><th>Category</th><th>Brand</th>
-                    <th>Unit</th><th className="r">Sale price</th>
+                    <th>Code</th><th>Name</th><th>Category</th><th>Unit</th>
+                    <th className="r">On hand</th><th className="r">Value</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((i) => (
+                  {stocked.map((i) => (
                     <tr key={i.id}>
                       <td className="code">
                         <Link href={`/items/categories/${i.item_group_id}`} style={{ color: "var(--dr)" }}>
@@ -66,17 +61,22 @@ export default async function Items() {
                         {i.name_my && (
                           <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{i.name_my}</div>
                         )}
-                        {!i.is_stocked && <> <span className="pill">service</span></>}
                       </td>
                       <td style={{ color: "var(--muted)" }}>
                         {i.parent_group_name ? `${i.parent_group_name} / ${i.group_name}` : i.group_name}
                       </td>
-                      <td style={{ color: "var(--muted)" }}>{i.brand_name ?? "—"}</td>
                       <td className="code">{i.uom_code}</td>
-                      <td className="r">{i.sale_price ? money(i.sale_price) : "—"}</td>
+                      <td className="r">{qty(i.qty_on_hand)}</td>
+                      <td className="r">{money(i.value_on_hand)}</td>
                     </tr>
                   ))}
                 </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan={5}>Total stock value</td>
+                    <td className="r">{money(totalValue)}</td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           )}

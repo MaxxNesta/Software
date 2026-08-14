@@ -3,7 +3,8 @@ import { notFound } from "next/navigation";
 import { sql } from "@/lib/db";
 import { money, qty } from "@/lib/db";
 import { createCategory, createItem, insertCategoryAbove, moveCategory } from "@/lib/actions";
-import { allCategories, childrenOf, trail, depthOf, levelCounts, branchIds, levelLabel, levelLabelPlural } from "@/lib/tree";
+import { getBrands } from "@/lib/queries";
+import { allCategories, childrenOf, trail, depthOf, levelCounts, branchIds, levelLabel, levelLabelPlural, MAX_CATEGORY_DEPTH } from "@/lib/tree";
 import { AddCategoryForm } from "@/components/level-form";
 import { ItemForm } from "@/components/item-form";
 import { Restructure } from "@/components/restructure";
@@ -22,7 +23,7 @@ export default async function CategoryLevel({ params }: { params: Promise<{ id: 
   const crumbs = trail(nodes, id);
   const depth = depthOf(nodes, id);
 
-  const [items, uoms] = await Promise.all([
+  const [items, uoms, brands] = await Promise.all([
     sql`select i.id, i.code, i.name, i.name_my, i.is_stocked,
                u.code as uom_code,
                coalesce(s.qty, 0) as on_hand,
@@ -36,6 +37,7 @@ export default async function CategoryLevel({ params }: { params: Promise<{ id: 
          where i.company_id = ${co.id} and i.item_group_id = ${id}
          order by i.code`,
     sql`select id, code, name from uom where company_id = ${co.id} order by code`,
+    getBrands(co.id),
   ]);
 
   const path = crumbs.map((c) => c.name).join(" → ");
@@ -70,18 +72,21 @@ export default async function CategoryLevel({ params }: { params: Promise<{ id: 
         </span>
       </div>
 
-      <div className="actions">
-        <AddCategoryForm
-          action={createCategory}
-          parentId={id}
-          parentCode={here.code}
-          returnTo={returnTo}
-          label={childLabel}
-          codeHint="01"
-          nameHint={depth === 0 ? "Book" : "Exercise Book"}
-        />
-      </div>
+      {depth < MAX_CATEGORY_DEPTH && (
+        <div className="actions">
+          <AddCategoryForm
+            action={createCategory}
+            parentId={id}
+            parentCode={here.code}
+            returnTo={returnTo}
+            label={childLabel}
+            codeHint="01"
+            nameHint="Exercise Book"
+          />
+        </div>
+      )}
 
+      {depth < MAX_CATEGORY_DEPTH && (
       <section>
         <div className="card">
           <div className="card-head">
@@ -134,6 +139,7 @@ export default async function CategoryLevel({ params }: { params: Promise<{ id: 
           )}
         </div>
       </section>
+      )}
 
       <section>
         <div className="card">
@@ -148,6 +154,7 @@ export default async function CategoryLevel({ params }: { params: Promise<{ id: 
               action={createItem}
               nodes={nodes}
               uoms={uoms as never}
+              brands={brands as never}
               returnTo={returnTo}
               presetGroupId={id}
             />

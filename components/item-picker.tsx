@@ -6,7 +6,8 @@ import { createItemInline, type PickerItem } from "@/lib/actions";
 type Node = { id: string; code: string; segment: string; name: string; parent_id: string | null };
 type Uom = { id: string; code: string; name: string };
 
-const LEVELS = ["Category", "Sub category", "Level 3", "Level 4", "Level 5"];
+// Category depth is capped at two: Category, then Sub category.
+const LEVELS = ["Category", "Sub category"];
 const fmt = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 
 /**

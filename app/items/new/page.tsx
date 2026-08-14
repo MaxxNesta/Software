@@ -2,14 +2,18 @@ import Link from "next/link";
 import { sql } from "@/lib/db";
 import { createItem } from "@/lib/actions";
 import { allCategories } from "@/lib/tree";
+import { getBrands } from "@/lib/queries";
 import { ItemForm } from "@/components/item-form";
 
 export default async function NewItem() {
   const [co] = await sql`select id from company order by created_at limit 1`;
   if (!co) return <div className="empty">No company found.</div>;
 
-  const nodes = await allCategories(co.id);
-  const uoms = await sql`select id, code, name from uom where company_id = ${co.id} order by code`;
+  const [nodes, uoms, brands] = await Promise.all([
+    allCategories(co.id),
+    sql`select id, code, name from uom where company_id = ${co.id} order by code`,
+    getBrands(co.id),
+  ]);
 
   if (nodes.length === 0) {
     return (
@@ -21,7 +25,7 @@ export default async function NewItem() {
         <div className="alert">
           No categories exist yet.{" "}
           <Link href="/items/categories" style={{ textDecoration: "underline" }}>
-            Add a parent category first.
+            Add a category first.
           </Link>
         </div>
       </>
@@ -43,6 +47,7 @@ export default async function NewItem() {
         action={createItem}
         nodes={nodes}
         uoms={uoms as never}
+        brands={brands as never}
         returnTo="/items"
       />
     </>

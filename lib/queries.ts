@@ -169,13 +169,17 @@ export async function getPartners(companyId: string) {
 
 export async function getItems(companyId: string) {
   return sql`
-    select i.id, i.code, i.name, i.name_my, i.item_group_id, i.is_stocked,
-           g.name as group_name,
+    select i.id, i.code, i.name, i.name_my, i.item_group_id, i.brand_id, i.is_stocked,
+           g.name as group_name, g.parent_id as group_parent_id,
+           pg.name as parent_group_name,
+           b.name as brand_name,
            u.code as uom_code,
            coalesce(s.qty, 0) as qty_on_hand, coalesce(s.val, 0) as value_on_hand,
            pr.price as sale_price
       from item i
       join item_group g on g.id = i.item_group_id
+      left join item_group pg on pg.id = g.parent_id
+      left join brand b on b.id = i.brand_id
       join uom u on u.id = i.base_uom_id
       left join (
             select item_id, sum(qty_on_hand) as qty, sum(value_on_hand) as val
@@ -184,6 +188,14 @@ export async function getItems(companyId: string) {
       left join item_price pr on pr.item_id = i.id
      where i.company_id = ${companyId}
      order by i.code`;
+}
+
+export async function getBrands(companyId: string) {
+  return sql`
+    select id, code, name, name_my, is_active
+      from brand
+     where company_id = ${companyId}
+     order by name`;
 }
 
 /**

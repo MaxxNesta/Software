@@ -57,21 +57,28 @@ export function branchIds(nodes: Node[], id: string): string[] {
   return [...out];
 }
 
-/**
- * What to call the level below the one being viewed. Naming follows the
- * hierarchy people here already use: parent category, category, sub category.
- */
+/** Depth 0 is a top-level category; depth 1 is a sub category. Nothing nests below that. */
+export const CATEGORY_LEVELS = ["Category", "Sub category"];
+export const MAX_CATEGORY_DEPTH = CATEGORY_LEVELS.length - 1;
+
+/** What to call the level below the one being viewed. */
 export function levelLabel(depth: number): string {
-  return ["Parent category", "Category", "Sub category", "Level 4", "Level 5", "Level 6"][depth]
-    ?? `Level ${depth + 1}`;
+  return CATEGORY_LEVELS[depth] ?? `Level ${depth + 1}`;
 }
 
-/** "Category" -> "Categories", "Level 4" -> "Level 4 categories". */
+/** "Category" -> "Categories", "Level 3" -> "Level 3 categories". */
 export function levelLabelPlural(depth: number): string {
   const one = levelLabel(depth);
   if (one.endsWith("y")) return `${one.slice(0, -1)}ies`;
   if (one.startsWith("Level ")) return `${one} categories`;
   return `${one}s`;
+}
+
+/** Every sub category (depth 1) across the whole tree, parent-code first. */
+export function subcategories(nodes: Node[]): Node[] {
+  return nodes
+    .filter((n) => n.parent_id !== null)
+    .sort((a, b) => a.code.localeCompare(b.code));
 }
 
 /** Direct child count and total item count for each category in one round trip. */

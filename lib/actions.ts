@@ -119,6 +119,15 @@ export async function createCategory(_prev: unknown, fd: FormData): Promise<Acti
     if (!segment) return { error: "Code segment is required" };
     if (!name) return { error: "Name is required" };
 
+    if (parentId) {
+      const [parent] = await sql`
+        select parent_id from item_group where id = ${parentId} and company_id = ${co}`;
+      if (!parent) return { error: "That category no longer exists" };
+      if (parent.parent_id) {
+        return { error: "Categories only nest two levels deep: Category → Sub category" };
+      }
+    }
+
     // The full code is the parent chain plus this segment, composed by
     // trigger. Two siblings sharing a segment would compose to the same
     // code, so check the composed value rather than the segment alone.
@@ -167,6 +176,15 @@ export async function insertCategoryAbove(_prev: unknown, fd: FormData): Promise
         select id, parent_id from item_group
          where id = ${targetId} and company_id = ${co}`;
       if (!target) throw new Error("That category no longer exists");
+      if (target.parent_id) {
+        throw new Error("This is already a sub category — inserting above it would nest three levels deep");
+      }
+
+      const [kid] = await tx`
+        select 1 from item_group where parent_id = ${target.id} limit 1`;
+      if (kid) {
+        throw new Error("This category already has sub categories inside it — they'd end up nested too deep");
+      }
 
       const [composed] = await tx`
         select fn_compose_group_code(${target.parent_id}::uuid, ${segment}) as code`;
@@ -213,6 +231,22 @@ export async function moveCategory(_prev: unknown, fd: FormData): Promise<Action
       if (cycle.length) {
         return { error: "That would put the category inside its own branch" };
       }
+
+      // Categories only nest two levels deep, so the new parent must itself
+      // be a top-level category, and a branch with sub categories of its own
+      // can only move to the top level (its children would land too deep).
+      const [np] = await sql`
+        select parent_id from item_group where id = ${newParent} and company_id = ${co}`;
+      if (!np) return { error: "That category no longer exists" };
+      if (np.parent_id) {
+        return { error: "Categories only nest two levels deep: Category → Sub category" };
+      }
+
+      const [kid] = await sql`
+        select 1 from item_group where parent_id = ${id} and company_id = ${co} limit 1`;
+      if (kid) {
+        return { error: "This category has sub categories of its own — move it to the top level instead" };
+      }
     }
 
     await sql`
@@ -238,6 +272,7 @@ export async function createItem(_prev: unknown, fd: FormData): Promise<ActionRe
     const name = str(fd, "name");
     const groupId = str(fd, "item_group_id");
     const uomId = str(fd, "base_uom_id");
+    const brandId = str(fd, "brand_id") || null;
     const salePrice = num(fd, "sale_price");
 
     if (!serial) return { error: "Serial is required" };
@@ -259,9 +294,9 @@ export async function createItem(_prev: unknown, fd: FormData): Promise<ActionRe
     await sql.begin(async (tx) => {
       const [item] = await tx`
         insert into item
-          (company_id, item_group_id, serial, code, name, name_my, base_uom_id, is_stocked)
+          (company_id, item_group_id, brand_id, serial, code, name, name_my, base_uom_id, is_stocked)
         values
-          (${co}, ${groupId}, ${serial}, ${fullCode}, ${name}, ${str(fd, "name_my") || null},
+          (${co}, ${groupId}, ${brandId}, ${serial}, ${fullCode}, ${name}, ${str(fd, "name_my") || null},
            ${uomId}, ${fd.get("is_stocked") !== null})
         returning id`;
 
@@ -282,7 +317,69 @@ export async function createItem(_prev: unknown, fd: FormData): Promise<ActionRe
 
   revalidatePath("/items");
   revalidatePath("/items/categories");
+  revalidatePath("/items/stock");
   redirect(returnTo || "/items");
+}
+
+// ------------------------------------------------------------- brands --
+
+export async function createBrand(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+
+    const code = str(fd, "code").toUpperCase();
+    const name = str(fd, "name");
+
+    if (!code) return { error: "Code is required" };
+    if (!name) return { error: "Name is required" };
+
+    const dup = await sql`select 1 from brand where company_id = ${co} and code = ${code}`;
+    if (dup.length) return { error: `Code ${code} is already used` };
+
+    await sql`
+      insert into brand (company_id, code, name, name_my)
+      values (${co}, ${code}, ${name}, ${str(fd, "name_my") || null})`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/items/brands");
+  revalidatePath("/items/new");
+  redirect("/items/brands");
+}
+
+export type NewBrandInput = { name: string; nameMy?: string };
+export type PickerBrand = { id: string; code: string; name: string };
+
+/** Quick-add from inside the item form, same shape as createItemInline. */
+export async function createBrandInline(
+  input: NewBrandInput
+): Promise<{ ok: true; brand: PickerBrand } | { ok: false; error: string }> {
+  try {
+    const co = await companyId();
+
+    const name = input.name.trim();
+    if (!name) return { ok: false, error: "Name is required" };
+
+    // Auto-code from the name — BRAKE PADS -> BRAKEPADS, deduped with a
+    // numeric suffix if that code is already taken.
+    const base = name.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12) || "BRAND";
+    let code = base;
+    let n = 1;
+    while ((await sql`select 1 from brand where company_id = ${co} and code = ${code}`).length) {
+      code = `${base}${++n}`;
+    }
+
+    const [brand] = await sql`
+      insert into brand (company_id, code, name, name_my)
+      values (${co}, ${code}, ${name}, ${input.nameMy?.trim() || null})
+      returning id, code, name`;
+
+    revalidatePath("/items/brands");
+    return { ok: true, brand };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 // ------------------------------------------------- inline item creation --

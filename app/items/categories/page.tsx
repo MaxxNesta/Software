@@ -27,7 +27,7 @@ export default async function CategoriesRoot() {
         action={createCategory}
         parentId={null}
         returnTo="/items/categories"
-        label="Parent category"
+        label="Category"
         codeHint="01"
         nameHint="Stationary"
       />
@@ -35,13 +35,13 @@ export default async function CategoriesRoot() {
       <section>
         <div className="card">
           <div className="card-head">
-            <h2>Parent categories</h2>
+            <h2>Categories</h2>
             <span className="page-sub">{roots.length}</span>
           </div>
 
           {roots.length === 0 ? (
             <div className="empty">
-              Nothing yet. Add a parent category &mdash; the broadest grouping you
+              Nothing yet. Add a category &mdash; the broadest grouping you
               use, like Food &amp; Drink or Household.
             </div>
           ) : (

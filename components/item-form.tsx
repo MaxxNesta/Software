@@ -1,15 +1,18 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useState, useTransition } from "react";
 import type { ActionResult } from "@/lib/actions";
+import { createBrandInline, type PickerBrand } from "@/lib/actions";
 
 type Node = {
   id: string; code: string; segment: string; name: string;
   parent_id: string | null;
 };
 type Uom = { id: string; code: string; name: string };
+type Brand = { id: string; code: string; name: string };
 
-const LEVELS = ["Parent category", "Category", "Sub category", "Level 4", "Level 5", "Level 6"];
+// Category depth is capped at two: Category, then Sub category.
+const LEVELS = ["Category", "Sub category"];
 
 /**
  * One dropdown per level of the tree. Choosing a category reveals the next
@@ -20,12 +23,14 @@ export function ItemForm({
   action,
   nodes,
   uoms,
+  brands,
   returnTo,
   presetGroupId,
 }: {
   action: (prev: unknown, fd: FormData) => Promise<ActionResult>;
   nodes: Node[];
   uoms: Uom[];
+  brands: Brand[];
   returnTo: string;
   presetGroupId?: string;
 }) {
@@ -33,6 +38,31 @@ export function ItemForm({
     action as never,
     null
   );
+
+  const [brandList, setBrandList] = useState<Brand[]>(brands);
+  const [brandId, setBrandId] = useState("");
+  const [addingBrand, setAddingBrand] = useState(false);
+  const [newBrandName, setNewBrandName] = useState("");
+  const [brandError, setBrandError] = useState<string | null>(null);
+  const [brandPending, startBrand] = useTransition();
+
+  function addBrand() {
+    const name = newBrandName.trim();
+    if (!name) return;
+    setBrandError(null);
+    startBrand(async () => {
+      const res = await createBrandInline({ name });
+      if (!res.ok) {
+        setBrandError(res.error);
+        return;
+      }
+      const created: PickerBrand = res.brand;
+      setBrandList((list) => [...list, created].sort((a, b) => a.name.localeCompare(b.name)));
+      setBrandId(created.id);
+      setAddingBrand(false);
+      setNewBrandName("");
+    });
+  }
 
   // Ancestry of the preset category, so opening this from inside a category
   // starts with the dropdowns already filled in.
@@ -81,6 +111,7 @@ export function ItemForm({
       {state && "error" in state && <div className="alert">{state.error}</div>}
 
       <input type="hidden" name="item_group_id" value={selectedId} />
+      <input type="hidden" name="brand_id" value={brandId} />
       <input type="hidden" name="return_to" value={returnTo} />
 
       <div className="card">
@@ -161,6 +192,42 @@ export function ItemForm({
             <div className="field">
               <label htmlFor="name_my">Name (Burmese)</label>
               <input id="name_my" name="name_my" type="text" />
+            </div>
+
+            <div className="field">
+              <label htmlFor="brand_select">Brand</label>
+              {addingBrand ? (
+                <>
+                  <input
+                    id="brand_select" type="text" autoFocus
+                    value={newBrandName}
+                    onChange={(e) => setNewBrandName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addBrand(); } }}
+                    placeholder="Advics"
+                  />
+                  <span className="actions" style={{ marginTop: "0.4rem" }}>
+                    <button type="button" className="tiny" disabled={brandPending || !newBrandName.trim()} onClick={addBrand}>
+                      {brandPending ? "Saving…" : "Add"}
+                    </button>
+                    <button type="button" className="ghost tiny" onClick={() => { setAddingBrand(false); setBrandError(null); }}>
+                      Cancel
+                    </button>
+                  </span>
+                  {brandError && <span className="hint" style={{ color: "var(--bad)" }}>{brandError}</span>}
+                </>
+              ) : (
+                <>
+                  <select id="brand_select" value={brandId} onChange={(e) => setBrandId(e.target.value)}>
+                    <option value="">— none —</option>
+                    {brandList.map((b) => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                  <span className="hint">
+                    Optional. <button type="button" className="ghost tiny" style={{ padding: 0 }} onClick={() => setAddingBrand(true)}>+ New brand</button>
+                  </span>
+                </>
+              )}
             </div>
 
             <div className="field">
