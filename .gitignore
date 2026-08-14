@@ -34,3 +34,5 @@ desktop.ini
 # Next.js
 .next/
 next-env.d.ts
+
+.vercel
