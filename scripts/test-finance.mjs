@@ -1,0 +1,197 @@
+// Cash book, bank, journal, interbranch transfer and opening balances.
+
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import postgres from "postgres";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+if (!process.env.DATABASE_URL) {
+  process.env.DATABASE_URL = readFileSync(join(root, ".env"), "utf8")
+    .match(/DATABASE_URL\s*=\s*(.+)/)[1].trim();
+}
+
+const {
+  postCashVoucher, postBankVoucher, postJournalVoucher,
+  postCashTransfer, postAccountOpening,
+} = await import("../lib/posting.ts");
+
+const url = process.env.DATABASE_URL;
+const local = url.includes("127.0.0.1") || url.includes("localhost");
+const sql = postgres(url, {
+  ssl: local ? false : "require",
+  prepare: !url.includes("-pooler."),
+  onnotice: () => {}, max: 1,
+});
+
+let bad = 0;
+const check = (l, ok, d = "") => { if (!ok) bad++; console.log(`  ${ok ? "PASS" : "FAIL"}  ${l}${d ? "  " + d : ""}`); };
+const n = (v) => Number(v ?? 0);
+const acct = async (code) =>
+  (await sql`select id from account where code = ${code} limit 1`)[0]?.id;
+
+try {
+  const [co] = await sql`select id from company limit 1`;
+
+  await sql.unsafe(`truncate table payment_allocation, stock_movement, document_line,
+    document, journal_line, journal_entry restart identity cascade`);
+  await sql`update number_series set next_value = 1`;
+
+  const cash = await acct("1110");   // Cash in Hand
+  const bank = await acct("1120");   // Bank - KBZ
+  const rent = await acct("6400");   // Rent
+  const salary = await acct("6300"); // Salaries
+  const capital = await acct("3100");
+  const today = new Date().toISOString().slice(0, 10);
+  console.log("");
+
+  // ---- Account opening ---------------------------------------------------
+
+  const ob = await postAccountOpening({
+    companyId: co.id, docDate: today,
+    lines: [
+      { accountId: cash, amount: 200000 },
+      { accountId: bank, amount: 3000000 },
+    ],
+  });
+  check("opening balances post", Boolean(ob.docNo), ob.docNo);
+
+  const obLines = await sql`
+    select a.code, jl.base_amount from journal_line jl
+      join account a on a.id = jl.account_id
+     where jl.journal_entry_id = (select journal_entry_id from document where id = ${ob.id})`;
+  check("balancing figure went to Opening Balance Equity",
+    obLines.some((l) => l.code === "3900" && n(l.base_amount) === -3200000),
+    obLines.map((l) => `${l.code}:${n(l.base_amount)}`).join(" "));
+
+  // ---- Cash book ---------------------------------------------------------
+
+  const cv = await postCashVoucher({
+    companyId: co.id, docDate: today, memo: "August rent",
+    lines: [
+      { accountId: rent, amount: 150000 },
+      { accountId: cash, amount: -150000 },
+    ],
+  });
+  check("cash voucher posts", Boolean(cv.docNo), cv.docNo);
+  check("cash voucher is numbered CV-", cv.docNo.startsWith("CV-"), cv.docNo);
+
+  const [cashBal] = await sql`
+    select coalesce(sum(base_amount), 0) as v from journal_line where account_id = ${cash}`;
+  check("cash reduced by the payment", n(cashBal.v) === 50000, `${n(cashBal.v)}`);
+
+  // ---- Bank --------------------------------------------------------------
+
+  const bv = await postBankVoucher({
+    companyId: co.id, docDate: today, memo: "August salaries",
+    lines: [
+      { accountId: salary, amount: 900000 },
+      { accountId: bank, amount: -900000 },
+    ],
+  });
+  check("bank voucher is numbered BV-", bv.docNo.startsWith("BV-"), bv.docNo);
+
+  // ---- Journal -----------------------------------------------------------
+
+  const jv = await postJournalVoucher({
+    companyId: co.id, docDate: today, memo: "Owner injects capital",
+    lines: [
+      { accountId: bank, amount: 500000 },
+      { accountId: capital, amount: -500000 },
+    ],
+  });
+  check("journal voucher is numbered JV-", jv.docNo.startsWith("JV-"), jv.docNo);
+
+  let refusedUnbalanced = false;
+  try {
+    await postJournalVoucher({
+      companyId: co.id, docDate: today,
+      lines: [
+        { accountId: bank, amount: 100 },
+        { accountId: capital, amount: -99 },
+      ],
+    });
+  } catch { refusedUnbalanced = true; }
+  check("refuses an unbalanced journal", refusedUnbalanced);
+
+  // A manual entry to a control account must still be refused by the database.
+  const ar = await acct("1200");
+  let refusedControl = false;
+  try {
+    await postJournalVoucher({
+      companyId: co.id, docDate: today,
+      lines: [
+        { accountId: ar, amount: 1000 },
+        { accountId: capital, amount: -1000 },
+      ],
+    });
+  } catch { refusedControl = true; }
+  check("still refuses a manual entry to a control account", refusedControl);
+
+  // ---- Interbranch transfer ----------------------------------------------
+
+  const ct = await postCashTransfer({
+    companyId: co.id, docDate: today,
+    fromAccountId: bank, toAccountId: cash, amount: 300000,
+    memo: "Cash drawn for Mandalay branch",
+  });
+  check("transfer is numbered CT-", ct.docNo.startsWith("CT-"), ct.docNo);
+
+  const [cashAfter] = await sql`
+    select coalesce(sum(base_amount), 0) as v from journal_line where account_id = ${cash}`;
+  check("cash up by the transfer", n(cashAfter.v) === 350000, `${n(cashAfter.v)}`);
+
+  let refusedSame = false;
+  try {
+    await postCashTransfer({
+      companyId: co.id, docDate: today,
+      fromAccountId: cash, toAccountId: cash, amount: 100,
+    });
+  } catch { refusedSame = true; }
+  check("refuses a transfer to the same account", refusedSame);
+
+  // ---- Account ledger ----------------------------------------------------
+
+  const ledger = await sql`
+    select entry_no, debit, credit, running_balance, doc_no
+      from v_account_ledger
+     where company_id = ${co.id} and account_id = ${cash}
+     order by entry_date, entry_no`;
+
+  console.log("\n  Cash in Hand");
+  console.log("  " + "-".repeat(58));
+  for (const r of ledger) {
+    console.log(
+      `  ${String(r.doc_no ?? "").padEnd(12)}` +
+      `${(n(r.debit) ? n(r.debit).toLocaleString() : "").padStart(12)}` +
+      `${(n(r.credit) ? n(r.credit).toLocaleString() : "").padStart(12)}` +
+      `${n(r.running_balance).toLocaleString().padStart(14)}`
+    );
+  }
+  console.log("");
+
+  check("ledger shows every movement", ledger.length === 3, `${ledger.length}`);
+  check("running balance ends at the account balance",
+    n(ledger[ledger.length - 1].running_balance) === 350000,
+    `${n(ledger[ledger.length - 1].running_balance)}`);
+
+  // ---- Invariants --------------------------------------------------------
+
+  const [tb] = await sql`select coalesce(sum(balance),0) as v from v_trial_balance`;
+  check("trial balance nets to zero", Math.abs(n(tb.v)) < 0.0001, `${n(tb.v)}`);
+  check("no unbalanced entries",
+    (await sql`select 1 from v_check_unbalanced_entries`).length === 0);
+
+  await sql.unsafe(`truncate table payment_allocation, stock_movement, document_line,
+    document, journal_line, journal_entry restart identity cascade`);
+  await sql`update number_series set next_value = 1`;
+
+  console.log(bad === 0 ? "  finance vouchers work\n" : `  ${bad} failed\n`);
+} catch (err) {
+  console.error(`\n  error: ${err.message}\n`);
+  bad++;
+} finally {
+  await sql.end();
+}
+
+process.exit(bad === 0 ? 0 : 1);

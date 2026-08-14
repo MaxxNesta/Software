@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { getCompany } from "@/lib/queries";
-import { NavLink } from "./nav";
+import { NavLink, NavGroup } from "./nav";
 
 export const metadata: Metadata = {
   title: "Myanmar ERP",
@@ -30,33 +30,40 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <span className="brand-sub">{company?.base_currency ?? "—"} · FY 2026-27</span>
             </div>
 
-            <div className="navgroup">
-              <span className="navlabel">Overview</span>
+            <NavGroup label="Overview" match={["/", "/ledger"]}>
               <NavLink href="/">Dashboard</NavLink>
               <NavLink href="/ledger">Trial balance</NavLink>
-            </div>
-
-            <div className="navgroup">
-              <span className="navlabel">Entry</span>
-              <NavLink href="/sales/new">New sales invoice</NavLink>
-              <NavLink href="/purchases/new">New purchase invoice</NavLink>
-              <NavLink href="/receivables/receive">Receive payment</NavLink>
-              <NavLink href="/payables/pay">Pay supplier</NavLink>
-            </div>
-
-            <div className="navgroup">
-              <span className="navlabel">Transactions</span>
               <NavLink href="/documents">All documents</NavLink>
-              <NavLink href="/receivables" exact>Receivables</NavLink>
-              <NavLink href="/payables" exact>Payables</NavLink>
-            </div>
+            </NavGroup>
 
-            <div className="navgroup">
-              <span className="navlabel">Master data</span>
+            <NavGroup label="Sales" match={["/sales", "/receivables"]}>
+              <NavLink href="/sales/new">New sales invoice</NavLink>
+              <NavLink href="/receivables/receive">Receive payment</NavLink>
+              <NavLink href="/receivables" exact>Receivables</NavLink>
+            </NavGroup>
+
+            <NavGroup label="Purchases" match={["/purchases", "/payables"]}>
+              <NavLink href="/purchases/new">New purchase invoice</NavLink>
+              <NavLink href="/payables/pay">Pay supplier</NavLink>
+              <NavLink href="/payables" exact>Payables</NavLink>
+            </NavGroup>
+
+            <NavGroup label="Cash &amp; Bank" match={["/finance"]}>
+              <NavLink href="/finance/cash-book">Cash book</NavLink>
+              <NavLink href="/finance/bank">Bank</NavLink>
+              <NavLink href="/finance/journal">Journal</NavLink>
+              <NavLink href="/finance/transfer">Interbranch transfer</NavLink>
+              <NavLink href="/finance/opening">Account opening</NavLink>
+              <NavLink href="/finance/cash-detail">Cash detail</NavLink>
+              <NavLink href="/finance/bank-detail">Bank detail</NavLink>
+            </NavGroup>
+
+            <NavGroup label="Master data" match={["/items", "/partners"]}>
               <NavLink href="/items/categories">Categories</NavLink>
               <NavLink href="/items" exact>Items &amp; stock</NavLink>
               <NavLink href="/partners">Partners</NavLink>
-            </div>
+            </NavGroup>
+
           </nav>
 
           <main className="main">

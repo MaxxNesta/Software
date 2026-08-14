@@ -517,3 +517,163 @@ export async function postSupplierPayment(input: SettlementInput) {
 export async function postCustomerReceipt(input: SettlementInput) {
   return postSettlement(input, "CUSTOMER_RECEIPT");
 }
+
+// =========================================================================
+// Finance vouchers
+// =========================================================================
+//
+// Cash, bank, journal, interbranch transfer and opening balances. None of
+// these move stock; they are the ledger being written directly, and they all
+// go through the same balanced-entry path as everything else.
+
+export type VoucherLine = {
+  accountId: string;
+  /** Positive debit, negative credit. */
+  amount: number;
+  locationId?: string | null;
+  costCenterId?: string | null;
+  memo?: string | null;
+};
+
+export type VoucherInput = {
+  companyId: string;
+  docDate: string;
+  lines: VoucherLine[];
+  memo?: string | null;
+  reference?: string | null;
+  locationId?: string | null;
+};
+
+async function postVoucher(
+  input: VoucherInput,
+  docType: "CASH_VOUCHER" | "BANK_VOUCHER" | "JOURNAL_VOUCHER" | "CASH_TRANSFER" | "OPENING_BALANCE"
+) {
+  const lines = input.lines.filter((l) => l.accountId && l.amount !== 0);
+  if (lines.length < 2) throw new Error("A voucher needs at least two lines");
+
+  const net = round4(lines.reduce((s, l) => s + l.amount, 0));
+  if (net !== 0) {
+    throw new Error(`Debits and credits differ by ${net}`);
+  }
+
+  return sql.begin(async (tx) => {
+    const { companyId, docDate } = input;
+
+    const fyRows = await tx`select fn_fiscal_year_for(${companyId}, ${docDate}::date) as fy`;
+    const fiscalYear = fyRows[0]?.fy ?? null;
+    if (!fiscalYear) throw new Error(`No fiscal year covers ${docDate}`);
+
+    const noRows = await tx`
+      select fn_next_document_no(${companyId}, ${docType}, ${fiscalYear}::uuid) as no`;
+    const docNo = noRows[0].no;
+
+    // The document total is the debit side, which is what people expect a
+    // voucher to be "for" — a 50,000 payment reads as 50,000, not 100,000.
+    const total = round4(lines.filter((l) => l.amount > 0).reduce((s, l) => s + l.amount, 0));
+
+    const [doc] = await tx`
+      insert into document
+        (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date,
+         location_id, currency, exchange_rate, status,
+         net_total, tax_total, gross_total, memo, reference, posted_at)
+      values
+        (${companyId}, ${docType}, ${docNo}, ${fiscalYear}, ${docDate}::date, ${docDate}::date,
+         ${input.locationId ?? null}, 'MMK', 1, 'POSTED',
+         ${total}, 0, ${total}, ${input.memo ?? null}, ${input.reference ?? null}, now())
+      returning id`;
+
+    const entryId = await writeJournal(
+      tx, companyId, docDate, docType, doc.id, `${docNo} ${input.memo ?? ""}`.trim(),
+      lines.map((l) => ({
+        accountId: l.accountId,
+        amount: l.amount,
+        locationId: l.locationId ?? input.locationId ?? null,
+      }))
+    );
+
+    await tx`update document set journal_entry_id = ${entryId} where id = ${doc.id}`;
+
+    return { id: doc.id as string, docNo: docNo as string, total };
+  });
+}
+
+/** Money in or out of a till. */
+export async function postCashVoucher(input: VoucherInput) {
+  return postVoucher(input, "CASH_VOUCHER");
+}
+
+/** Money in or out of a bank account. */
+export async function postBankVoucher(input: VoucherInput) {
+  return postVoucher(input, "BANK_VOUCHER");
+}
+
+/** Free-form, any accounts. Control accounts are still refused by the database. */
+export async function postJournalVoucher(input: VoucherInput) {
+  return postVoucher(input, "JOURNAL_VOUCHER");
+}
+
+/**
+ * Money between two accounts, typically one branch's till to another's.
+ * Written as its own type so branch cash movements are not mistaken for
+ * income or expense.
+ */
+export async function postCashTransfer(input: {
+  companyId: string;
+  docDate: string;
+  fromAccountId: string;
+  toAccountId: string;
+  fromLocationId?: string | null;
+  toLocationId?: string | null;
+  amount: number;
+  memo?: string | null;
+  reference?: string | null;
+}) {
+  if (input.fromAccountId === input.toAccountId) {
+    throw new Error("Choose two different accounts");
+  }
+  if (!(input.amount > 0)) throw new Error("Enter an amount");
+
+  return postVoucher(
+    {
+      companyId: input.companyId,
+      docDate: input.docDate,
+      memo: input.memo,
+      reference: input.reference,
+      lines: [
+        { accountId: input.toAccountId, amount: input.amount, locationId: input.toLocationId },
+        { accountId: input.fromAccountId, amount: -input.amount, locationId: input.fromLocationId },
+      ],
+    },
+    "CASH_TRANSFER"
+  );
+}
+
+/**
+ * Opening balances. Each line is what an account starts at; the difference
+ * goes to Opening Balance Equity so the entry balances without anyone having
+ * to work the figure out by hand.
+ */
+export async function postAccountOpening(input: {
+  companyId: string;
+  docDate: string;
+  lines: { accountId: string; amount: number }[];
+  memo?: string | null;
+}) {
+  const lines = input.lines.filter((l) => l.accountId && l.amount !== 0);
+  if (lines.length === 0) throw new Error("Enter at least one opening balance");
+
+  const [equity] = await sql`
+    select fn_system_account(${input.companyId}, 'OPENING_BALANCE_EQUITY') as a`;
+
+  const net = round4(lines.reduce((s, l) => s + l.amount, 0));
+
+  return postVoucher(
+    {
+      companyId: input.companyId,
+      docDate: input.docDate,
+      memo: input.memo ?? "Opening balances",
+      lines: net === 0 ? lines : [...lines, { accountId: equity.a, amount: -net }],
+    },
+    "OPENING_BALANCE"
+  );
+}

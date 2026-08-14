@@ -279,7 +279,9 @@ select co, t.dt, fy, t.px, t.nv from (values
     ('SUPPLIER_PAYMENT','PAY-',2), ('SALES_ORDER','SO-',5), ('DELIVERY','DO-',5),
     ('SALES_INVOICE','SI-',5), ('CUSTOMER_RECEIPT','RC-',3),
     ('PURCHASE_RETURN','PR-',1), ('SALES_RETURN','SR-',1),
-    ('STOCK_ADJUSTMENT','ADJ-',1), ('STOCK_TRANSFER','TRF-',1), ('OPENING_BALANCE','OB-',2)
+    ('STOCK_ADJUSTMENT','ADJ-',1), ('STOCK_TRANSFER','TRF-',1), ('OPENING_BALANCE','OB-',2),
+    ('CASH_VOUCHER','CV-',1), ('BANK_VOUCHER','BV-',1),
+    ('JOURNAL_VOUCHER','JV-',1), ('CASH_TRANSFER','CT-',1), ('JOURNAL','JE-',1)
 ) as t(dt, px, nv);
 
 -- =========================== DOCUMENTS ====================================

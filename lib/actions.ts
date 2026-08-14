@@ -6,7 +6,9 @@ import { sql } from "./db";
 import {
   postSalesInvoice, postPurchaseInvoice,
   postSupplierPayment, postCustomerReceipt,
-  type InvoiceLine, type Allocation,
+  postCashVoucher, postBankVoucher, postJournalVoucher,
+  postCashTransfer, postAccountOpening,
+  type InvoiceLine, type Allocation, type VoucherLine,
 } from "./posting";
 
 export type ActionResult = { error: string } | { ok: true };
@@ -559,6 +561,190 @@ export async function getSettlementData(kind: "pay" | "receive") {
   ]);
 
   return { partners, invoices, cashAccounts, role };
+}
+
+// ------------------------------------------------------ finance vouchers --
+
+function parseVoucherLines(fd: FormData): VoucherLine[] {
+  const raw = String(fd.get("lines") ?? "[]");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("Could not read the voucher lines");
+  }
+  if (!Array.isArray(parsed)) throw new Error("Could not read the voucher lines");
+
+  return parsed
+    .map((l: any) => ({
+      accountId: String(l.accountId ?? ""),
+      amount: Number(l.amount),
+      memo: l.memo ? String(l.memo) : null,
+    }))
+    .filter((l) => l.accountId && Number.isFinite(l.amount) && l.amount !== 0);
+}
+
+async function postVoucherFrom(
+  fd: FormData,
+  kind: "cash" | "bank" | "journal"
+): Promise<{ error: string } | { id: string }> {
+  const co = await companyId();
+  const lines = parseVoucherLines(fd);
+
+  if (lines.length < 2) {
+    return { error: "A voucher needs at least two lines that balance" };
+  }
+
+  const input = {
+    companyId: co,
+    docDate: str(fd, "doc_date"),
+    memo: str(fd, "memo") || null,
+    reference: str(fd, "reference") || null,
+    locationId: str(fd, "location_id") || null,
+    lines,
+  };
+
+  const r =
+    kind === "cash" ? await postCashVoucher(input)
+      : kind === "bank" ? await postBankVoucher(input)
+      : await postJournalVoucher(input);
+
+  return { id: r.id };
+}
+
+function financeRevalidate() {
+  revalidatePath("/");
+  revalidatePath("/documents");
+  revalidatePath("/ledger");
+  revalidatePath("/finance/cash-detail");
+  revalidatePath("/finance/bank-detail");
+}
+
+export async function createCashVoucher(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let id: string;
+  try {
+    const r = await postVoucherFrom(fd, "cash");
+    if ("error" in r) return { error: r.error };
+    id = r.id;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+  financeRevalidate();
+  redirect(`/documents/${id}`);
+}
+
+export async function createBankVoucher(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let id: string;
+  try {
+    const r = await postVoucherFrom(fd, "bank");
+    if ("error" in r) return { error: r.error };
+    id = r.id;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+  financeRevalidate();
+  redirect(`/documents/${id}`);
+}
+
+export async function createJournalVoucher(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let id: string;
+  try {
+    const r = await postVoucherFrom(fd, "journal");
+    if ("error" in r) return { error: r.error };
+    id = r.id;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+  financeRevalidate();
+  redirect(`/documents/${id}`);
+}
+
+export async function createCashTransfer(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let id: string;
+  try {
+    const co = await companyId();
+    const from = str(fd, "from_account_id");
+    const to = str(fd, "to_account_id");
+    const amount = num(fd, "amount");
+
+    if (!from || !to) return { error: "Choose both accounts" };
+    if (from === to) return { error: "Choose two different accounts" };
+    if (!(amount > 0)) return { error: "Enter an amount" };
+
+    const r = await postCashTransfer({
+      companyId: co,
+      docDate: str(fd, "doc_date"),
+      fromAccountId: from,
+      toAccountId: to,
+      fromLocationId: str(fd, "from_location_id") || null,
+      toLocationId: str(fd, "to_location_id") || null,
+      amount,
+      memo: str(fd, "memo") || null,
+      reference: str(fd, "reference") || null,
+    });
+    id = r.id;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+  financeRevalidate();
+  redirect(`/documents/${id}`);
+}
+
+export async function createAccountOpening(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let id: string;
+  try {
+    const co = await companyId();
+    const lines = parseVoucherLines(fd);
+    if (lines.length === 0) return { error: "Enter at least one opening balance" };
+
+    const r = await postAccountOpening({
+      companyId: co,
+      docDate: str(fd, "doc_date"),
+      memo: str(fd, "memo") || null,
+      lines: lines.map((l) => ({ accountId: l.accountId, amount: l.amount })),
+    });
+    id = r.id;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+  financeRevalidate();
+  redirect(`/documents/${id}`);
+}
+
+/** Accounts and locations for the finance voucher screens. */
+export async function getFinanceData() {
+  const co = await companyId();
+
+  const [accounts, cashAccounts, bankAccounts, locations, costCenters] = await Promise.all([
+    sql`select id, code, name, account_type, is_control, is_cash_account, is_bank_account
+          from account
+         where company_id = ${co} and is_postable and is_active
+         order by code`,
+    sql`select id, code, name from account
+         where company_id = ${co} and is_cash_account and not is_bank_account and is_active
+         order by code`,
+    sql`select id, code, name from account
+         where company_id = ${co} and is_bank_account and is_active order by code`,
+    sql`select id, code, name from location
+         where company_id = ${co} and is_active order by code`,
+    sql`select id, code, name from cost_center
+         where company_id = ${co} and is_active order by code`,
+  ]);
+
+  return { accounts, cashAccounts, bankAccounts, locations, costCenters };
+}
+
+/** Movements on one account with its running balance. */
+export async function getAccountLedger(accountId: string, from?: string, to?: string) {
+  const co = await companyId();
+  return sql`
+    select entry_no, entry_date, memo, source_type, doc_no, doc_type,
+           partner_name, location_code, debit, credit, running_balance
+      from v_account_ledger
+     where company_id = ${co} and account_id = ${accountId}
+       ${from ? sql`and entry_date >= ${from}::date` : sql``}
+       ${to ? sql`and entry_date <= ${to}::date` : sql``}
+     order by entry_date, entry_no`;
 }
 
 // ------------------------------------------------------------- form lookups --
