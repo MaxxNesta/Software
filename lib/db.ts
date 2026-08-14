@@ -17,8 +17,11 @@ function connect() {
   const isPooled = url.includes("-pooler.") || url.includes("pgbouncer=true");
 
   return postgres(url, {
-    // Serverless: keep the pool small and let idle connections go.
-    max: process.env.VERCEL ? 1 : 5,
+    // A single connection serialises everything: a page firing six queries
+    // through Promise.all would wait for six sequential round trips rather
+    // than one. Pooled endpoints sit behind PgBouncer and handle far more
+    // than this, so the small pool only ever cost latency.
+    max: isPooled ? 8 : process.env.VERCEL ? 3 : 5,
     idle_timeout: 20,
     connect_timeout: 10,
     ssl: isLocal ? false : "require",
