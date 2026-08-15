@@ -25,17 +25,38 @@ put to a Myanmar auditor, because changing it later means re-posting history.
 
 ---
 
-## D2 — Inventory valuation method
+## D2 — Inventory valuation method — resolved
 
 **Question.** Weighted average, FIFO, or per-item choice?
 
-**Recommendation.** Weighted average, system-wide, for v1. It is what local
-practice assumes, it is far simpler under multi-currency, and per-item choice
-multiplies the test surface.
+**Resolution.** FIFO, tracked per warehouse, applied to every item — not a
+per-item choice. Cost layers live in `stock_lot`/`stock_lot_consumption`
+(migration `0017_fifo.sql`); a lot's remaining quantity is always derived
+(`qty_received - sum(consumption)`), never stored. Consumption draws
+oldest-lot-first (`planFifoConsumption` in `lib/posting.ts`), ordered by
+`received_date, created_at` so same-day receipts still resolve
+deterministically by actual posting order.
+
+Originally shipped as company-wide weighted average per the recommendation
+below; converted once expiry/lot-relevant segments made FIFO necessary, per
+the "Watch" note that anticipated this. Existing on-hand stock at cutover was
+backfilled into one opening lot per item/location, valued at that item's
+moving-average cost as of the migration — `fn_moving_average_cost` is left in
+the schema only because the backfill needed it, not because it's still used
+going forward.
+
+<details>
+<summary>Original recommendation (superseded)</summary>
+
+Weighted average, system-wide, for v1. It is what local practice assumes, it
+is far simpler under multi-currency, and per-item choice multiplies the test
+surface.
 
 **Watch.** FIFO becomes necessary for expiry-tracked goods (pharma, food),
 which are real target segments. The valuation layer should be pluggable even
 if only one implementation ships.
+
+</details>
 
 ---
 

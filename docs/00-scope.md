@@ -9,7 +9,7 @@ is something to point at.
 |---|---|
 | **Purchase cycle** | Purchase order → goods receipt → purchase invoice → payment, plus purchase returns |
 | **Sales cycle** | Sales order → delivery → sales invoice → receipt, plus sales returns |
-| **Inventory** | Multi-location stock, weighted-average valuation, adjustments, transfers, unit hierarchy |
+| **Inventory** | Multi-location stock, per-warehouse FIFO valuation (see [decisions D2](03-decisions.md)), adjustments, transfers, unit hierarchy |
 | **AR / AP** | Open-item subledgers with invoice-level matching and aging |
 | **General ledger** | Chart of accounts, journal entries, fiscal periods with locking, trial balance, P&L, balance sheet |
 | **Multi-currency** | Per-transaction rate capture, base-currency conversion, realised FX gain/loss on settlement |
