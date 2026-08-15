@@ -14,6 +14,14 @@ type Row = { key: number; accountId: string; debit: string; credit: string; memo
 
 const fmt = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 
+// Expense first — the common case for a cash payment — then the types a
+// day-to-day voucher touches less often, roughly in that order.
+const TYPE_ORDER = ["EXPENSE", "REVENUE", "ASSET", "LIABILITY", "EQUITY", "COGS"];
+const TYPE_LABEL: Record<string, string> = {
+  EXPENSE: "Expense", REVENUE: "Revenue", ASSET: "Asset",
+  LIABILITY: "Liability", EQUITY: "Equity", COGS: "Cost of goods sold",
+};
+
 /**
  * Cash book, bank book and journal are the same voucher with different
  * defaults. Cash and bank fix one side to a till or bank account and ask
@@ -108,7 +116,7 @@ export function VoucherForm({
               <input id="doc_date" name="doc_date" type="date" defaultValue={today} required />
             </div>
 
-            {locations.length > 0 && (
+            {locations.length > 1 ? (
               <div className="field">
                 <label htmlFor="location_id">Branch</label>
                 <select id="location_id" name="location_id" defaultValue="">
@@ -118,6 +126,8 @@ export function VoucherForm({
                   ))}
                 </select>
               </div>
+            ) : (
+              locations.length === 1 && <input type="hidden" name="location_id" value={locations[0].id} />
             )}
 
             <div className="field">
@@ -158,13 +168,17 @@ export function VoucherForm({
                 <label htmlFor="other">{direction === "out" ? "Paid for" : "Received from"}</label>
                 <select id="other" value={otherId} onChange={(e) => setOtherId(e.target.value)} required>
                   <option value="">Choose an account…</option>
-                  {postable
-                    .filter((a) => a.id !== moneyId)
-                    .map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.code} · {a.name} ({a.account_type.toLowerCase()})
-                      </option>
-                    ))}
+                  {TYPE_ORDER.map((t) => {
+                    const group = postable.filter((a) => a.id !== moneyId && a.account_type === t);
+                    if (group.length === 0) return null;
+                    return (
+                      <optgroup key={t} label={TYPE_LABEL[t] ?? t}>
+                        {group.map((a) => (
+                          <option key={a.id} value={a.id}>{a.code} · {a.name}</option>
+                        ))}
+                      </optgroup>
+                    );
+                  })}
                 </select>
               </div>
 
@@ -176,7 +190,9 @@ export function VoucherForm({
             </div>
 
             {lines.length === 2 && (
-              <div className="posting" style={{ marginTop: "1rem" }}>
+              <div style={{ marginTop: "1rem" }}>
+                <span className="hint">Accounting entry</span>
+                <div className="posting">
                 {lines
                   .map((l) => {
                     const a = accounts.find((x) => x.id === l.accountId)!;
@@ -185,6 +201,7 @@ export function VoucherForm({
                     return `${pad}${side}  ${a.code} ${a.name.padEnd(26)}${fmt(Math.abs(l.amount)).padStart(12)}`;
                   })
                   .join("\n")}
+                </div>
               </div>
             )}
           </div>
@@ -199,7 +216,7 @@ export function VoucherForm({
             <table className="linetable">
               <thead>
                 <tr>
-                  <th>Account</th><th>Narration</th>
+                  <th>Account</th><th>Description</th>
                   <th className="r">Debit</th><th className="r">Credit</th><th />
                 </tr>
               </thead>
@@ -218,7 +235,7 @@ export function VoucherForm({
                     </td>
                     <td>
                       <input type="text" value={r.memo}
-                        onChange={(e) => setRow(r.key, { memo: e.target.value })} aria-label="Narration" />
+                        onChange={(e) => setRow(r.key, { memo: e.target.value })} aria-label="Description" />
                     </td>
                     <td className="narrow">
                       <input type="number" min="0" step="any" value={r.debit} aria-label="Debit"
@@ -249,7 +266,7 @@ export function VoucherForm({
       )}
 
       <div className="field">
-        <label htmlFor="memo">Narration</label>
+        <label htmlFor="memo">Description</label>
         <input id="memo" name="memo" type="text" placeholder="What this voucher is for" />
       </div>
 
@@ -259,8 +276,10 @@ export function VoucherForm({
         </button>
         <span className="page-sub">
           {ready
-            ? "Writes a balanced journal entry."
-            : "Debits and credits must agree before this can post."}
+            ? "Ready to post."
+            : simple
+              ? "Fill in the account and amount to continue."
+              : "The two sides don't add up to the same total yet."}
         </span>
       </div>
     </form>
