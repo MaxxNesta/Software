@@ -91,6 +91,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <NavLink href="/salespersons">Salespersons</NavLink>
             </NavGroup>
 
+            <NavGroup label="Settings" match={["/settings"]}>
+              <NavLink href="/settings/accounts">Chart of accounts</NavLink>
+            </NavGroup>
+
           </nav>
 
           <main className="main">

@@ -190,6 +190,46 @@ export async function getItems(companyId: string) {
      order by i.code`;
 }
 
+// ------------------------------------------------------ chart of accounts --
+
+/**
+ * The whole chart, with everything the admin screen needs to know before it
+ * lets someone change an account: whether the posting engine resolves it by
+ * role, whether a determination rule points at it, whether anything has been
+ * posted to it, and whether it has children. All four are reasons to refuse
+ * a delete or a deactivation.
+ */
+export async function getChartOfAccounts(companyId: string) {
+  return sql`
+    select a.id, a.code, a.name, a.name_my, a.account_type, a.parent_id,
+           a.is_postable, a.is_control, a.is_active, a.currency,
+           a.is_cash_account, a.is_bank_account,
+           coalesce(sa.roles, array[]::text[])  as system_roles,
+           coalesce(ad.roles, array[]::text[])  as rule_roles,
+           coalesce(jl.n, 0)::int               as posting_count,
+           coalesce(kids.n, 0)::int             as child_count
+      from account a
+      left join (
+        select account_id, array_agg(role order by role) as roles
+          from system_account where company_id = ${companyId} group by account_id
+      ) sa on sa.account_id = a.id
+      left join (
+        select account_id, array_agg(distinct role order by role) as roles
+          from account_determination where company_id = ${companyId} group by account_id
+      ) ad on ad.account_id = a.id
+      left join (
+        select account_id, count(*) as n
+          from journal_line where company_id = ${companyId} group by account_id
+      ) jl on jl.account_id = a.id
+      left join (
+        select parent_id, count(*) as n
+          from account where company_id = ${companyId} and parent_id is not null
+         group by parent_id
+      ) kids on kids.parent_id = a.id
+     where a.company_id = ${companyId}
+     order by a.code`;
+}
+
 // --------------------------------------------------- orders & fulfilment --
 
 /** Open sales order lines — ordered less delivered so far, only where that's still positive. */

@@ -1475,3 +1475,274 @@ export async function deleteSalesman(_prev: unknown, fd: FormData): Promise<Acti
   revalidatePath("/salespersons");
   redirectWithToast("/salespersons", "Salesperson deleted");
 }
+
+// --------------------------------------------------- chart of accounts --
+
+const ACCOUNT_TYPES = ["ASSET", "LIABILITY", "EQUITY", "REVENUE", "COGS", "EXPENSE"];
+
+/**
+ * Why an account must not be retired. The posting engine resolves some
+ * accounts by role and the ledger refuses postings to an inactive account,
+ * so deactivating one of these turns a routine sale into a runtime error.
+ * Better to refuse here, naming the role, than to break posting later.
+ */
+async function accountLock(co: string, id: string): Promise<string | null> {
+  const sys = await sql`
+    select role from system_account where company_id = ${co} and account_id = ${id} order by role`;
+  if (sys.length) {
+    const roles = sys.map((r: any) => r.role.replace(/_/g, " ").toLowerCase()).join(", ");
+    return `The posting engine uses this account for ${roles}. Point that role at another account before retiring this one.`;
+  }
+
+  const rules = await sql`
+    select distinct role from account_determination
+     where company_id = ${co} and account_id = ${id} order by role`;
+  if (rules.length) {
+    const roles = rules.map((r: any) => r.role.replace(/_/g, " ").toLowerCase()).join(", ");
+    return `Posting rules send ${roles} to this account. Change those rules before retiring it.`;
+  }
+
+  return null;
+}
+
+/** Bank accounts are a subset of cash accounts — see migration 0014. */
+function moneyFlags(kind: string): { cash: boolean; bank: boolean } {
+  if (kind === "bank") return { cash: true, bank: true };
+  if (kind === "cash") return { cash: true, bank: false };
+  return { cash: false, bank: false };
+}
+
+export async function createAccount(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let toastMsg = "Account added";
+
+  try {
+    const co = await companyId();
+
+    const code = str(fd, "code");
+    const name = str(fd, "name");
+    const type = str(fd, "account_type");
+    const parentId = str(fd, "parent_id") || null;
+
+    if (!code) return { error: "Code is required" };
+    if (!name) return { error: "Name is required" };
+    if (!ACCOUNT_TYPES.includes(type)) return { error: "Choose an account type" };
+
+    const dup = await sql`select 1 from account where company_id = ${co} and code = ${code}`;
+    if (dup.length) return { error: `Code ${code} is already used` };
+
+    if (parentId) {
+      const [p] = await sql`
+        select code, name, account_type from account where id = ${parentId} and company_id = ${co}`;
+      if (!p) return { error: "That parent account no longer exists" };
+      if (p.account_type !== type) {
+        return {
+          error: `${p.code} ${p.name} is ${String(p.account_type).toLowerCase()}, so anything filed under it has to be too`,
+        };
+      }
+
+      // An account that has been posted to cannot become a heading: the
+      // ledger refuses postings to headings, so its own history would sit on
+      // an account nothing is allowed to post to any more.
+      const [posted] = await sql`
+        select count(*)::int as n from journal_line
+         where company_id = ${co} and account_id = ${parentId}`;
+      if (posted.n > 0) {
+        return {
+          error: `${p.code} ${p.name} already has ${posted.n} posting${posted.n === 1 ? "" : "s"} against it and cannot become a heading. File this account alongside it instead.`,
+        };
+      }
+    }
+
+    const money = moneyFlags(str(fd, "money_kind"));
+
+    await sql.begin(async (tx) => {
+      await tx`
+        insert into account
+          (company_id, parent_id, code, name, name_my, account_type,
+           currency, is_cash_account, is_bank_account)
+        values
+          (${co}, ${parentId}, ${code}, ${name}, ${str(fd, "name_my") || null}, ${type},
+           ${str(fd, "currency") || null}, ${money.cash}, ${money.bank})`;
+
+      // Gaining a child makes the parent a heading, and headings are not postable.
+      if (parentId) {
+        await tx`
+          update account set is_postable = false
+           where id = ${parentId} and company_id = ${co}`;
+      }
+    });
+
+    toastMsg = `${code} · ${name} added`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/settings/accounts");
+  redirectWithToast("/settings/accounts", toastMsg);
+}
+
+export async function updateAccount(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let toastMsg = "Account saved";
+
+  try {
+    const co = await companyId();
+
+    const id = str(fd, "id");
+    const code = str(fd, "code");
+    const name = str(fd, "name");
+    const type = str(fd, "account_type");
+    const parentId = str(fd, "parent_id") || null;
+    const isActive = fd.get("is_active") !== null;
+
+    if (!id) return { error: "Choose an account" };
+    if (!code) return { error: "Code is required" };
+    if (!name) return { error: "Name is required" };
+    if (!ACCOUNT_TYPES.includes(type)) return { error: "Choose an account type" };
+    if (parentId === id) return { error: "An account cannot sit under itself" };
+
+    const [current] = await sql`
+      select account_type, is_active, parent_id from account
+       where id = ${id} and company_id = ${co}`;
+    if (!current) return { error: "That account no longer exists" };
+
+    const dup = await sql`
+      select 1 from account where company_id = ${co} and code = ${code} and id <> ${id}`;
+    if (dup.length) return { error: `Code ${code} is already used` };
+
+    const [posted] = await sql`
+      select count(*)::int as n from journal_line
+       where company_id = ${co} and account_id = ${id}`;
+
+    // Retyping a posted account silently moves its history between the
+    // balance sheet and the income statement.
+    if (type !== current.account_type && posted.n > 0) {
+      return {
+        error: `This account has ${posted.n} posting${posted.n === 1 ? "" : "s"} against it, so its type can no longer change — that would move settled history between the balance sheet and the income statement.`,
+      };
+    }
+
+    if (!isActive && current.is_active) {
+      const lock = await accountLock(co, id);
+      if (lock) return { error: lock };
+    }
+
+    if (parentId) {
+      const cycle = await sql`
+        with recursive descendants as (
+          select id from account where id = ${id} and company_id = ${co}
+          union all
+          select a.id from account a join descendants d on a.parent_id = d.id
+        )
+        select 1 from descendants where id = ${parentId}`;
+      if (cycle.length) return { error: "That would put the account inside its own branch" };
+
+      const [p] = await sql`
+        select code, name, account_type from account where id = ${parentId} and company_id = ${co}`;
+      if (!p) return { error: "That parent account no longer exists" };
+      if (p.account_type !== type) {
+        return {
+          error: `${p.code} ${p.name} is ${String(p.account_type).toLowerCase()}, so anything filed under it has to be too`,
+        };
+      }
+    }
+
+    const money = moneyFlags(str(fd, "money_kind"));
+
+    await sql.begin(async (tx) => {
+      await tx`
+        update account set
+          code = ${code}, name = ${name}, name_my = ${str(fd, "name_my") || null},
+          account_type = ${type}, parent_id = ${parentId},
+          currency = ${str(fd, "currency") || null},
+          is_cash_account = ${money.cash}, is_bank_account = ${money.bank},
+          is_active = ${isActive}
+        where id = ${id} and company_id = ${co}`;
+
+      if (parentId) {
+        await tx`update account set is_postable = false where id = ${parentId} and company_id = ${co}`;
+      }
+
+      // Moving out of a branch can leave the old parent childless. A heading
+      // with nothing under it and nothing allowed to post to it is dead, so
+      // hand it back its postability.
+      if (current.parent_id && current.parent_id !== parentId) {
+        const [left] = await tx`
+          select 1 from account where parent_id = ${current.parent_id} limit 1`;
+        if (!left) {
+          await tx`update account set is_postable = true where id = ${current.parent_id}`;
+        }
+      }
+    });
+
+    toastMsg = `${code} · ${name} saved`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/settings/accounts");
+  redirectWithToast("/settings/accounts", toastMsg);
+}
+
+export async function deactivateAccount(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+    const id = str(fd, "id");
+    if (!id) return { error: "Choose an account" };
+
+    const lock = await accountLock(co, id);
+    if (lock) return { error: lock };
+
+    await sql`update account set is_active = false where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/settings/accounts");
+  redirectWithToast("/settings/accounts", "Account deactivated");
+}
+
+/**
+ * Only ever succeeds for an account nothing has touched. Anything with
+ * postings, rules, or a partner override behind it is held by a foreign key,
+ * which is the answer we want — history stays intact and the account gets
+ * deactivated instead.
+ */
+export async function deleteAccount(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+    const id = str(fd, "id");
+    if (!id) return { error: "Choose an account" };
+
+    const lock = await accountLock(co, id);
+    if (lock) return { error: lock };
+
+    const [kid] = await sql`
+      select 1 from account where parent_id = ${id} and company_id = ${co} limit 1`;
+    if (kid) return { error: "This account has accounts filed under it. Move or remove those first." };
+
+    const [target] = await sql`
+      select parent_id from account where id = ${id} and company_id = ${co}`;
+
+    await sql.begin(async (tx) => {
+      await tx`delete from account where id = ${id} and company_id = ${co}`;
+
+      // A heading that just lost its last child is postable again — otherwise
+      // it is left as an account nothing can post to and nothing sits under.
+      if (target?.parent_id) {
+        const [left] = await tx`
+          select 1 from account where parent_id = ${target.parent_id} limit 1`;
+        if (!left) {
+          await tx`update account set is_postable = true where id = ${target.parent_id}`;
+        }
+      }
+    });
+  } catch (e) {
+    if (isForeignKeyViolation(e)) {
+      return { error: "This account has postings or rules against it — deactivate it instead of deleting" };
+    }
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/settings/accounts");
+  redirectWithToast("/settings/accounts", "Account deleted");
+}
