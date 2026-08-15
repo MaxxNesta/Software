@@ -115,8 +115,8 @@ export function TransferForm({
           <input id="reference" name="reference" type="text" placeholder="Slip or cheque no." />
         </div>
         <div className="field">
-          <label htmlFor="memo">Narration</label>
-          <input id="memo" name="memo" type="text" placeholder="What this transfer is for" />
+          <label htmlFor="memo">Description</label>
+          <input id="memo" name="memo" type="text" placeholder="What this transfer is for — English or Myanmar" />
         </div>
       </div>
 

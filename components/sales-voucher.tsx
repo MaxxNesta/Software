@@ -522,7 +522,7 @@ export function SalesVoucher({
       {showRemark ? (
         <div className="field">
           <label htmlFor="memo">Remark</label>
-          <input id="memo" name="memo" type="text" autoFocus placeholder="Note for this voucher" />
+          <input id="memo" name="memo" type="text" autoFocus placeholder="Note for this voucher — English or Myanmar" />
         </div>
       ) : (
         <div className="actions">

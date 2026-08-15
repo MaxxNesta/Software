@@ -73,8 +73,9 @@ export function OpeningForm({
           <span className="hint">The day before you started trading in this system</span>
         </div>
         <div className="field">
-          <label htmlFor="memo">Narration</label>
+          <label htmlFor="memo">Description</label>
           <input id="memo" name="memo" type="text" defaultValue="Opening balances" />
+          <span className="hint">English or Myanmar</span>
         </div>
       </div>
 
