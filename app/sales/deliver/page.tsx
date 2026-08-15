@@ -3,12 +3,7 @@ import { shortDate } from "@/lib/db";
 import { getCompany, getOpenSalesOrders, getPendingDeliveries } from "@/lib/queries";
 import { createDelivery, deliverPendingInvoice } from "@/lib/actions";
 import { FulfillOrderForm } from "@/components/fulfill-order-form";
-
-async function deliverNow(fd: FormData) {
-  "use server";
-  const res = await deliverPendingInvoice(null, fd);
-  if (res && "error" in res) throw new Error(res.error);
-}
+import { DeliverNowButton } from "@/components/deliver-now-button";
 
 export default async function Deliver() {
   const company = await getCompany();
@@ -71,10 +66,7 @@ export default async function Deliver() {
                       <td className="code">{shortDate(p.doc_date)}</td>
                       <td className="r">{p.lines}</td>
                       <td>
-                        <form action={deliverNow}>
-                          <input type="hidden" name="invoice_id" value={p.id} />
-                          <button type="submit" className="ghost tiny">Deliver now</button>
-                        </form>
+                        <DeliverNowButton invoiceId={p.id} action={deliverPendingInvoice} />
                       </td>
                     </tr>
                   ))}
