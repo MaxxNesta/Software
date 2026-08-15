@@ -2,7 +2,7 @@ import Link from "next/link";
 import { money, qty, shortDate } from "@/lib/db";
 import { getCompany, getItems, getStockMovements } from "@/lib/queries";
 import { AccountPicker } from "@/components/account-picker";
-import { DataTable } from "@/components/data-table";
+import { DataTable, type DataRow } from "@/components/data-table";
 
 const label = (t: string) => t.replace(/_/g, " ").toLowerCase();
 
@@ -28,6 +28,31 @@ export default async function StockMovements({
     balance += Number(r.qty);
     return { ...r, balance };
   });
+
+  const tableRows: DataRow[] = withBalance.map((r) => ({
+    key: r.id,
+    searchText: [r.doc_no, r.doc_type, r.location_code, r.batch_no].filter(Boolean).join(" "),
+    node: (
+      <tr>
+        <td className="code">{shortDate(r.movement_date)}</td>
+        <td className="code">
+          {r.document_id ? (
+            <Link href={`/documents/${r.document_id}`} style={{ color: "var(--dr)" }}>
+              {r.doc_no ?? label(r.doc_type)}
+            </Link>
+          ) : (
+            "—"
+          )}
+        </td>
+        <td className="code">{r.location_code}</td>
+        <td className="code">{r.batch_no ?? "—"}</td>
+        <td className="r">{Number(r.qty) > 0 ? qty(r.qty) : ""}</td>
+        <td className="r">{Number(r.qty) < 0 ? qty(String(-Number(r.qty))) : ""}</td>
+        <td className="r">{money(r.unit_cost)}</td>
+        <td className="r">{qty(String(r.balance))}</td>
+      </tr>
+    ),
+  }));
 
   return (
     <>
@@ -71,8 +96,7 @@ export default async function StockMovements({
                 // would make it read as wrong even though each value is
                 // still historically accurate.
                 <DataTable
-                  rows={withBalance}
-                  rowKey={(r) => r.id}
+                  rows={tableRows}
                   emptyLabel="No matches"
                   searchPlaceholder="Search movements…"
                   columns={[
@@ -85,29 +109,6 @@ export default async function StockMovements({
                     { key: "cost", label: "Unit cost", align: "r" },
                     { key: "balance", label: "Balance", align: "r" },
                   ]}
-                  getSearchText={(r) =>
-                    [r.doc_no, r.doc_type, r.location_code, r.batch_no].filter(Boolean).join(" ")
-                  }
-                  renderRow={(r) => (
-                    <tr>
-                      <td className="code">{shortDate(r.movement_date)}</td>
-                      <td className="code">
-                        {r.document_id ? (
-                          <Link href={`/documents/${r.document_id}`} style={{ color: "var(--dr)" }}>
-                            {r.doc_no ?? label(r.doc_type)}
-                          </Link>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="code">{r.location_code}</td>
-                      <td className="code">{r.batch_no ?? "—"}</td>
-                      <td className="r">{Number(r.qty) > 0 ? qty(r.qty) : ""}</td>
-                      <td className="r">{Number(r.qty) < 0 ? qty(String(-Number(r.qty))) : ""}</td>
-                      <td className="r">{money(r.unit_cost)}</td>
-                      <td className="r">{qty(String(r.balance))}</td>
-                    </tr>
-                  )}
                 />
               )}
             </div>

@@ -9,31 +9,40 @@ export type Column = {
   align?: "r";
 };
 
+export type DataRow = {
+  key: string;
+  /** Combined lowercase-searchable text for this row. */
+  searchText: string;
+  /** Sort value per sortable column key. */
+  sort?: Record<string, string | number>;
+  /** The row already rendered as a <tr> — a Server Component page renders
+   *  its own markup exactly as before; this component never touches it. */
+  node: React.ReactNode;
+};
+
 /**
  * Search and sort for an already-fetched list, entirely client-side — these
  * pages are small master-data/document lists, not paged reports, so there's
- * nothing worth a server round trip for. Rows keep rendering exactly as each
- * page already writes them (renderRow gets the whole <tr>); this only owns
- * the toolbar, the header click targets, and the filter/sort of the array.
+ * nothing worth a server round trip for.
+ *
+ * Rows arrive pre-rendered (DataRow.node) with plain searchText/sort data
+ * alongside, rather than as callbacks — a Server Component page can hand a
+ * Client Component already-rendered JSX and plain data, but not a function;
+ * React has no way to serialize a closure across that boundary (only a
+ * "use server" action gets special handling), so renderRow/getSearchText/
+ * getSortValue callbacks would crash in production even though they type-
+ * check fine locally with no DATABASE_URL to actually exercise the render.
  */
-export function DataTable<T>({
+export function DataTable({
   rows,
   columns,
-  renderRow,
-  getSearchText,
-  getSortValue,
-  rowKey,
   searchPlaceholder = "Search…",
   defaultSort,
   emptyLabel = "Nothing here",
   footer,
 }: {
-  rows: T[];
+  rows: DataRow[];
   columns: Column[];
-  renderRow: (row: T) => React.ReactNode;
-  getSearchText: (row: T) => string;
-  getSortValue?: (row: T, key: string) => string | number;
-  rowKey: (row: T) => string;
   searchPlaceholder?: string;
   defaultSort?: { key: string; dir: "asc" | "desc" };
   emptyLabel?: string;
@@ -45,21 +54,21 @@ export function DataTable<T>({
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return needle ? rows.filter((r) => getSearchText(r).toLowerCase().includes(needle)) : rows;
-  }, [rows, q, getSearchText]);
+    return needle ? rows.filter((r) => r.searchText.toLowerCase().includes(needle)) : rows;
+  }, [rows, q]);
 
   const sorted = useMemo(() => {
-    if (!sort || !getSortValue) return filtered;
+    if (!sort) return filtered;
     const copy = [...filtered];
     copy.sort((a, b) => {
-      const av = getSortValue(a, sort.key);
-      const bv = getSortValue(b, sort.key);
+      const av = a.sort?.[sort.key] ?? "";
+      const bv = b.sort?.[sort.key] ?? "";
       const cmp =
         typeof av === "number" && typeof bv === "number" ? av - bv : String(av).localeCompare(String(bv));
       return sort.dir === "asc" ? cmp : -cmp;
     });
     return copy;
-  }, [filtered, sort, getSortValue]);
+  }, [filtered, sort]);
 
   function toggleSort(key: string) {
     setSort((s) => {
@@ -87,7 +96,7 @@ export function DataTable<T>({
             <tr>
               {columns.map((c) => (
                 <th key={c.key} className={c.align === "r" ? "r" : undefined}>
-                  {c.sortable && getSortValue ? (
+                  {c.sortable ? (
                     <button type="button" className="sortbtn" onClick={() => toggleSort(c.key)}>
                       {c.label}
                       {sort?.key === c.key ? (sort.dir === "asc" ? " ↑" : " ↓") : ""}
@@ -101,7 +110,7 @@ export function DataTable<T>({
           </thead>
           <tbody>
             {sorted.map((r) => (
-              <Fragment key={rowKey(r)}>{renderRow(r)}</Fragment>
+              <Fragment key={r.key}>{r.node}</Fragment>
             ))}
             {sorted.length === 0 && (
               <tr>

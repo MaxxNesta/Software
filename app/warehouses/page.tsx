@@ -2,7 +2,7 @@ import { getCompany, getLocations } from "@/lib/queries";
 import { createLocation, updateLocation, deleteLocation, deactivateLocation } from "@/lib/actions";
 import { AddLocationForm } from "@/components/location-form";
 import { LocationRow } from "@/components/location-row";
-import { DataTable } from "@/components/data-table";
+import { DataTable, type DataRow } from "@/components/data-table";
 
 export default async function Warehouses() {
   const company = await getCompany();
@@ -13,6 +13,27 @@ export default async function Warehouses() {
     parent_id: string | null; parent_name: string | null;
     is_stock_location: boolean; is_active: boolean;
   }>;
+
+  const rows: DataRow[] = locations.map((l) => ({
+    key: l.id,
+    searchText: [l.code, l.name, l.name_my, l.parent_name].filter(Boolean).join(" "),
+    sort: {
+      code: l.code,
+      name: l.name,
+      parent_name: l.parent_name ?? "",
+      is_stock_location: l.is_stock_location ? 1 : 0,
+      is_active: l.is_active ? 1 : 0,
+    },
+    node: (
+      <LocationRow
+        location={l}
+        locations={locations}
+        updateAction={updateLocation}
+        deleteAction={deleteLocation}
+        deactivateAction={deactivateLocation}
+      />
+    ),
+  }));
 
   return (
     <>
@@ -38,8 +59,7 @@ export default async function Warehouses() {
             <div className="empty">None yet. Add your first warehouse above.</div>
           ) : (
             <DataTable
-              rows={locations}
-              rowKey={(l) => l.id}
+              rows={rows}
               emptyLabel="No warehouses"
               searchPlaceholder="Search warehouses…"
               defaultSort={{ key: "code", dir: "asc" }}
@@ -51,21 +71,6 @@ export default async function Warehouses() {
                 { key: "is_active", label: "Status", sortable: true },
                 { key: "actions", label: "" },
               ]}
-              getSearchText={(l) => [l.code, l.name, l.name_my, l.parent_name].filter(Boolean).join(" ")}
-              getSortValue={(l, key) => {
-                if (key === "is_stock_location") return l.is_stock_location ? 1 : 0;
-                if (key === "is_active") return l.is_active ? 1 : 0;
-                return (l as any)[key] ?? "";
-              }}
-              renderRow={(l) => (
-                <LocationRow
-                  location={l}
-                  locations={locations}
-                  updateAction={updateLocation}
-                  deleteAction={deleteLocation}
-                  deactivateAction={deactivateLocation}
-                />
-              )}
             />
           )}
         </div>

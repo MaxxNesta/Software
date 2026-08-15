@@ -3,7 +3,7 @@ import { sql } from "@/lib/db";
 import { createCategory } from "@/lib/actions";
 import { allCategories, childrenOf, levelCounts, branchIds } from "@/lib/tree";
 import { AddCategoryForm } from "@/components/level-form";
-import { DataTable } from "@/components/data-table";
+import { DataTable, type DataRow } from "@/components/data-table";
 
 export default async function CategoriesRoot() {
   const [co] = await sql`select id from company order by created_at limit 1`;
@@ -15,6 +15,32 @@ export default async function CategoriesRoot() {
     ...g,
     inside: counts.childrenOf(g.id),
     total: branchIds(nodes, g.id).reduce((s, id) => s + counts.itemsIn(id), 0),
+  }));
+
+  const rows: DataRow[] = roots.map((g) => ({
+    key: g.id,
+    searchText: [g.code, g.name, g.name_my].filter(Boolean).join(" "),
+    sort: { code: g.code, name: g.name, inside: g.inside, total: g.total },
+    node: (
+      <tr className="link">
+        <td className="code">
+          <Link href={`/items/categories/${g.id}`} style={{ color: "var(--dr)" }}>
+            {g.code}
+          </Link>
+        </td>
+        <td className="wrap">
+          <Link href={`/items/categories/${g.id}`}>{g.name}</Link>
+          {g.name_my && (
+            <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{g.name_my}</div>
+          )}
+        </td>
+        <td className="r">{g.inside || ""}</td>
+        <td className="r">{g.total || ""}</td>
+        <td>
+          <Link href={`/items/categories/${g.id}`} className="btn ghost tiny">Open &rarr;</Link>
+        </td>
+      </tr>
+    ),
   }));
 
   return (
@@ -51,8 +77,7 @@ export default async function CategoriesRoot() {
             </div>
           ) : (
             <DataTable
-              rows={roots}
-              rowKey={(g) => g.id}
+              rows={rows}
               emptyLabel="No categories"
               searchPlaceholder="Search categories…"
               defaultSort={{ key: "code", dir: "asc" }}
@@ -63,28 +88,6 @@ export default async function CategoriesRoot() {
                 { key: "total", label: "Items", sortable: true, align: "r" },
                 { key: "actions", label: "" },
               ]}
-              getSearchText={(g) => [g.code, g.name, g.name_my].filter(Boolean).join(" ")}
-              getSortValue={(g, key) => (key === "inside" || key === "total" ? Number((g as any)[key]) : (g as any)[key] ?? "")}
-              renderRow={(g) => (
-                <tr className="link">
-                  <td className="code">
-                    <Link href={`/items/categories/${g.id}`} style={{ color: "var(--dr)" }}>
-                      {g.code}
-                    </Link>
-                  </td>
-                  <td className="wrap">
-                    <Link href={`/items/categories/${g.id}`}>{g.name}</Link>
-                    {g.name_my && (
-                      <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{g.name_my}</div>
-                    )}
-                  </td>
-                  <td className="r">{g.inside || ""}</td>
-                  <td className="r">{g.total || ""}</td>
-                  <td>
-                    <Link href={`/items/categories/${g.id}`} className="btn ghost tiny">Open &rarr;</Link>
-                  </td>
-                </tr>
-              )}
             />
           )}
         </div>

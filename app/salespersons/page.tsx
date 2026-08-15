@@ -2,7 +2,7 @@ import { getCompany, getSalesmen, getLocations } from "@/lib/queries";
 import { createSalesman, updateSalesman, deleteSalesman, deactivateSalesman } from "@/lib/actions";
 import { AddSalesmanForm } from "@/components/salesman-form";
 import { SalesmanRow } from "@/components/salesman-row";
-import { DataTable } from "@/components/data-table";
+import { DataTable, type DataRow } from "@/components/data-table";
 
 export default async function Salespersons() {
   const company = await getCompany();
@@ -19,6 +19,27 @@ export default async function Salespersons() {
     }>,
     Array<{ id: string; code: string; name: string }>,
   ];
+
+  const rows: DataRow[] = salesmen.map((s) => ({
+    key: s.id,
+    searchText: [s.code, s.name, s.name_my, s.phone, s.location_name].filter(Boolean).join(" "),
+    sort: {
+      code: s.code,
+      name: s.name,
+      phone: s.phone ?? "",
+      location_name: s.location_name ?? "",
+      commission_pct: Number(s.commission_pct),
+    },
+    node: (
+      <SalesmanRow
+        salesman={s}
+        locations={locations}
+        updateAction={updateSalesman}
+        deleteAction={deleteSalesman}
+        deactivateAction={deactivateSalesman}
+      />
+    ),
+  }));
 
   return (
     <>
@@ -44,8 +65,7 @@ export default async function Salespersons() {
             <div className="empty">None yet. Add your first salesperson above.</div>
           ) : (
             <DataTable
-              rows={salesmen}
-              rowKey={(s) => s.id}
+              rows={rows}
               emptyLabel="No salespersons"
               searchPlaceholder="Search salespersons…"
               defaultSort={{ key: "code", dir: "asc" }}
@@ -57,20 +77,6 @@ export default async function Salespersons() {
                 { key: "commission_pct", label: "Commission", sortable: true, align: "r" },
                 { key: "actions", label: "" },
               ]}
-              getSearchText={(s) => [s.code, s.name, s.name_my, s.phone, s.location_name].filter(Boolean).join(" ")}
-              getSortValue={(s, key) => {
-                if (key === "commission_pct") return Number(s.commission_pct);
-                return (s as any)[key] ?? "";
-              }}
-              renderRow={(s) => (
-                <SalesmanRow
-                  salesman={s}
-                  locations={locations}
-                  updateAction={updateSalesman}
-                  deleteAction={deleteSalesman}
-                  deactivateAction={deactivateSalesman}
-                />
-              )}
             />
           )}
         </div>

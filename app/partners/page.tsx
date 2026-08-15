@@ -1,13 +1,43 @@
 import Link from "next/link";
 import { money } from "@/lib/db";
 import { getCompany, getPartners } from "@/lib/queries";
-import { DataTable } from "@/components/data-table";
+import { DataTable, type DataRow } from "@/components/data-table";
 
 export default async function Partners() {
   const company = await getCompany();
   if (!company) return <div className="empty">No company found.</div>;
 
-  const partners = await getPartners(company.id);
+  const partners = (await getPartners(company.id)) as any[];
+
+  const rows: DataRow[] = partners.map((p) => ({
+    key: p.id,
+    searchText: [p.code, p.name, p.name_my, p.township].filter(Boolean).join(" "),
+    sort: {
+      code: p.code,
+      name: p.name,
+      role: `${p.is_customer ? "Customer" : ""} ${p.is_supplier ? "Supplier" : ""}`.trim(),
+      township: p.township ?? "",
+      payment_terms_days: Number(p.payment_terms_days),
+      outstanding: Number(p.outstanding),
+    },
+    node: (
+      <tr>
+        <td className="code">{p.code}</td>
+        <td className="wrap">
+          {p.name}
+          {p.name_my && <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{p.name_my}</div>}
+        </td>
+        <td>
+          {p.is_customer && <span className="pill ok">Customer</span>}
+          {p.is_customer && p.is_supplier && " "}
+          {p.is_supplier && <span className="pill warn">Supplier</span>}
+        </td>
+        <td>{p.township ?? "—"}</td>
+        <td className="r">{p.payment_terms_days}d</td>
+        <td className="r">{Number(p.outstanding) ? money(p.outstanding) : "—"}</td>
+      </tr>
+    ),
+  }));
 
   return (
     <>
@@ -30,8 +60,7 @@ export default async function Partners() {
             </span>
           </div>
           <DataTable
-            rows={partners as any[]}
-            rowKey={(p) => p.id}
+            rows={rows}
             emptyLabel="No partners yet"
             searchPlaceholder="Search partners…"
             defaultSort={{ key: "code", dir: "asc" }}
@@ -43,32 +72,6 @@ export default async function Partners() {
               { key: "payment_terms_days", label: "Terms", sortable: true, align: "r" },
               { key: "outstanding", label: "Outstanding", sortable: true, align: "r" },
             ]}
-            getSearchText={(p) => [p.code, p.name, p.name_my, p.township].filter(Boolean).join(" ")}
-            getSortValue={(p, key) => {
-              switch (key) {
-                case "role": return `${p.is_customer ? "Customer" : ""} ${p.is_supplier ? "Supplier" : ""}`.trim();
-                case "payment_terms_days": return Number(p.payment_terms_days);
-                case "outstanding": return Number(p.outstanding);
-                default: return (p as any)[key] ?? "";
-              }
-            }}
-            renderRow={(p: any) => (
-              <tr>
-                <td className="code">{p.code}</td>
-                <td className="wrap">
-                  {p.name}
-                  {p.name_my && <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{p.name_my}</div>}
-                </td>
-                <td>
-                  {p.is_customer && <span className="pill ok">Customer</span>}
-                  {p.is_customer && p.is_supplier && " "}
-                  {p.is_supplier && <span className="pill warn">Supplier</span>}
-                </td>
-                <td>{p.township ?? "—"}</td>
-                <td className="r">{p.payment_terms_days}d</td>
-                <td className="r">{Number(p.outstanding) ? money(p.outstanding) : "—"}</td>
-              </tr>
-            )}
           />
         </div>
       </section>

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { money, qty } from "@/lib/db";
 import { getCompany, getItems, getReservedQty, getIncomingQty } from "@/lib/queries";
-import { DataTable } from "@/components/data-table";
+import { DataTable, type DataRow } from "@/components/data-table";
 
 type Row = {
   id: string; code: string; name: string; name_my: string | null;
@@ -32,6 +32,54 @@ export default async function Stock() {
   });
   const totalValue = stocked.reduce((s, i) => s + Number(i.value_on_hand), 0);
 
+  const rows: DataRow[] = stocked.map((i) => ({
+    key: i.id,
+    searchText: [i.code, i.name, i.name_my, i.group_name, i.parent_group_name].filter(Boolean).join(" "),
+    sort: {
+      code: i.code,
+      name: i.name,
+      group_name: i.parent_group_name ? `${i.parent_group_name} / ${i.group_name}` : i.group_name,
+      uom_code: i.uom_code,
+      onHand: i.onHand,
+      reservedQty: i.reservedQty,
+      available: i.available,
+      incomingQty: i.incomingQty,
+      projected: i.projected,
+      value_on_hand: Number(i.value_on_hand),
+    },
+    node: (
+      <tr>
+        <td className="code">
+          <Link href={`/items/categories/${i.item_group_id}`} style={{ color: "var(--dr)" }}>
+            {i.code}
+          </Link>
+        </td>
+        <td className="wrap">
+          {i.name}
+          {i.name_my && (
+            <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{i.name_my}</div>
+          )}
+        </td>
+        <td style={{ color: "var(--muted)" }}>
+          {i.parent_group_name ? `${i.parent_group_name} / ${i.group_name}` : i.group_name}
+        </td>
+        <td className="code">{i.uom_code}</td>
+        <td className="r">{qty(String(i.onHand))}</td>
+        <td className="r" style={{ color: i.reservedQty > 0 ? "var(--warn)" : undefined }}>
+          {i.reservedQty > 0 ? qty(String(i.reservedQty)) : "—"}
+        </td>
+        <td className="r" style={{ fontWeight: 600 }}>
+          {qty(String(i.available))}
+        </td>
+        <td className="r" style={{ color: i.incomingQty > 0 ? "var(--ok)" : undefined }}>
+          {i.incomingQty > 0 ? qty(String(i.incomingQty)) : "—"}
+        </td>
+        <td className="r">{qty(String(i.projected))}</td>
+        <td className="r">{money(i.value_on_hand)}</td>
+      </tr>
+    ),
+  }));
+
   return (
     <>
       <div className="page-head">
@@ -59,8 +107,7 @@ export default async function Stock() {
             </div>
           ) : (
             <DataTable
-              rows={stocked}
-              rowKey={(i) => i.id}
+              rows={rows}
               emptyLabel="No stocked items"
               searchPlaceholder="Search stock…"
               defaultSort={{ key: "code", dir: "asc" }}
@@ -76,53 +123,12 @@ export default async function Stock() {
                 { key: "projected", label: "Projected", sortable: true, align: "r" },
                 { key: "value_on_hand", label: "Value", sortable: true, align: "r" },
               ]}
-              getSearchText={(i) =>
-                [i.code, i.name, i.name_my, i.group_name, i.parent_group_name].filter(Boolean).join(" ")
-              }
-              getSortValue={(i, key) => {
-                switch (key) {
-                  case "group_name": return i.parent_group_name ? `${i.parent_group_name} / ${i.group_name}` : i.group_name;
-                  case "value_on_hand": return Number(i.value_on_hand);
-                  default: return (i as any)[key] ?? 0;
-                }
-              }}
               footer={
                 <tr>
                   <td colSpan={9}>Total stock value</td>
                   <td className="r">{money(totalValue)}</td>
                 </tr>
               }
-              renderRow={(i) => (
-                <tr>
-                  <td className="code">
-                    <Link href={`/items/categories/${i.item_group_id}`} style={{ color: "var(--dr)" }}>
-                      {i.code}
-                    </Link>
-                  </td>
-                  <td className="wrap">
-                    {i.name}
-                    {i.name_my && (
-                      <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{i.name_my}</div>
-                    )}
-                  </td>
-                  <td style={{ color: "var(--muted)" }}>
-                    {i.parent_group_name ? `${i.parent_group_name} / ${i.group_name}` : i.group_name}
-                  </td>
-                  <td className="code">{i.uom_code}</td>
-                  <td className="r">{qty(String(i.onHand))}</td>
-                  <td className="r" style={{ color: i.reservedQty > 0 ? "var(--warn)" : undefined }}>
-                    {i.reservedQty > 0 ? qty(String(i.reservedQty)) : "—"}
-                  </td>
-                  <td className="r" style={{ fontWeight: 600 }}>
-                    {qty(String(i.available))}
-                  </td>
-                  <td className="r" style={{ color: i.incomingQty > 0 ? "var(--ok)" : undefined }}>
-                    {i.incomingQty > 0 ? qty(String(i.incomingQty)) : "—"}
-                  </td>
-                  <td className="r">{qty(String(i.projected))}</td>
-                  <td className="r">{money(i.value_on_hand)}</td>
-                </tr>
-              )}
             />
           )}
         </div>

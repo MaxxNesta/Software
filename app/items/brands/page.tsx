@@ -1,19 +1,37 @@
 import { sql } from "@/lib/db";
 import { createBrand } from "@/lib/actions";
 import { AddBrandForm } from "@/components/brand-form";
-import { DataTable } from "@/components/data-table";
+import { DataTable, type DataRow } from "@/components/data-table";
 
 export default async function Brands() {
   const [co] = await sql`select id from company order by created_at limit 1`;
   if (!co) return <div className="empty">No company found.</div>;
 
-  const brands = await sql`
+  const brands = (await sql`
     select b.id, b.code, b.name, b.name_my, count(i.id)::int as items
       from brand b
       left join item i on i.brand_id = b.id
      where b.company_id = ${co.id}
      group by b.id
-     order by b.name`;
+     order by b.name`) as any[];
+
+  const rows: DataRow[] = brands.map((b) => ({
+    key: b.id,
+    searchText: [b.code, b.name, b.name_my].filter(Boolean).join(" "),
+    sort: { code: b.code, name: b.name, items: Number(b.items) },
+    node: (
+      <tr>
+        <td className="code">{b.code}</td>
+        <td className="wrap">
+          {b.name}
+          {b.name_my && (
+            <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{b.name_my}</div>
+          )}
+        </td>
+        <td className="r">{b.items || ""}</td>
+      </tr>
+    ),
+  }));
 
   return (
     <>
@@ -42,8 +60,7 @@ export default async function Brands() {
             </div>
           ) : (
             <DataTable
-              rows={brands as any[]}
-              rowKey={(b) => b.id}
+              rows={rows}
               emptyLabel="No brands"
               searchPlaceholder="Search brands…"
               defaultSort={{ key: "name", dir: "asc" }}
@@ -52,20 +69,6 @@ export default async function Brands() {
                 { key: "name", label: "Name", sortable: true },
                 { key: "items", label: "Items", sortable: true, align: "r" },
               ]}
-              getSearchText={(b) => [b.code, b.name, b.name_my].filter(Boolean).join(" ")}
-              getSortValue={(b, key) => (key === "items" ? Number(b.items) : (b as any)[key] ?? "")}
-              renderRow={(b: any) => (
-                <tr>
-                  <td className="code">{b.code}</td>
-                  <td className="wrap">
-                    {b.name}
-                    {b.name_my && (
-                      <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{b.name_my}</div>
-                    )}
-                  </td>
-                  <td className="r">{b.items || ""}</td>
-                </tr>
-              )}
             />
           )}
         </div>

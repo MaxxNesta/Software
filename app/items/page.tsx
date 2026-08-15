@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { money } from "@/lib/db";
 import { getCompany, getItems } from "@/lib/queries";
-import { DataTable } from "@/components/data-table";
+import { DataTable, type DataRow } from "@/components/data-table";
 
 type Row = {
   id: string; code: string; name: string; name_my: string | null;
@@ -15,6 +15,42 @@ export default async function Items() {
   if (!company) return <div className="empty">No company found.</div>;
 
   const items = (await getItems(company.id)) as unknown as Row[];
+
+  const rows: DataRow[] = items.map((i) => ({
+    key: i.id,
+    searchText: [i.code, i.name, i.name_my, i.group_name, i.parent_group_name, i.brand_name, i.uom_code]
+      .filter(Boolean).join(" "),
+    sort: {
+      code: i.code,
+      name: i.name,
+      group_name: i.parent_group_name ? `${i.parent_group_name} / ${i.group_name}` : i.group_name,
+      brand_name: i.brand_name ?? "",
+      uom_code: i.uom_code,
+      sale_price: Number(i.sale_price ?? 0),
+    },
+    node: (
+      <tr>
+        <td className="code">
+          <Link href={`/items/categories/${i.item_group_id}`} style={{ color: "var(--dr)" }}>
+            {i.code}
+          </Link>
+        </td>
+        <td className="wrap">
+          {i.name}
+          {i.name_my && (
+            <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{i.name_my}</div>
+          )}
+          {!i.is_stocked && <> <span className="pill">service</span></>}
+        </td>
+        <td style={{ color: "var(--muted)" }}>
+          {i.parent_group_name ? `${i.parent_group_name} / ${i.group_name}` : i.group_name}
+        </td>
+        <td style={{ color: "var(--muted)" }}>{i.brand_name ?? "—"}</td>
+        <td className="code">{i.uom_code}</td>
+        <td className="r">{i.sale_price ? money(i.sale_price) : "—"}</td>
+      </tr>
+    ),
+  }));
 
   return (
     <>
@@ -47,8 +83,7 @@ export default async function Items() {
             </div>
           ) : (
             <DataTable
-              rows={items}
-              rowKey={(i) => i.id}
+              rows={rows}
               emptyLabel="No items"
               searchPlaceholder="Search items…"
               defaultSort={{ key: "code", dir: "asc" }}
@@ -60,39 +95,6 @@ export default async function Items() {
                 { key: "uom_code", label: "Unit", sortable: true },
                 { key: "sale_price", label: "Sale price", sortable: true, align: "r" },
               ]}
-              getSearchText={(i) =>
-                [i.code, i.name, i.name_my, i.group_name, i.parent_group_name, i.brand_name, i.uom_code]
-                  .filter(Boolean).join(" ")
-              }
-              getSortValue={(i, key) => {
-                switch (key) {
-                  case "sale_price": return Number(i.sale_price ?? 0);
-                  case "group_name": return i.parent_group_name ? `${i.parent_group_name} / ${i.group_name}` : i.group_name;
-                  default: return (i as any)[key] ?? "";
-                }
-              }}
-              renderRow={(i) => (
-                <tr>
-                  <td className="code">
-                    <Link href={`/items/categories/${i.item_group_id}`} style={{ color: "var(--dr)" }}>
-                      {i.code}
-                    </Link>
-                  </td>
-                  <td className="wrap">
-                    {i.name}
-                    {i.name_my && (
-                      <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{i.name_my}</div>
-                    )}
-                    {!i.is_stocked && <> <span className="pill">service</span></>}
-                  </td>
-                  <td style={{ color: "var(--muted)" }}>
-                    {i.parent_group_name ? `${i.parent_group_name} / ${i.group_name}` : i.group_name}
-                  </td>
-                  <td style={{ color: "var(--muted)" }}>{i.brand_name ?? "—"}</td>
-                  <td className="code">{i.uom_code}</td>
-                  <td className="r">{i.sale_price ? money(i.sale_price) : "—"}</td>
-                </tr>
-              )}
             />
           )}
         </div>
