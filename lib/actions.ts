@@ -39,7 +39,7 @@ function redirectWithToast(path: string, message: string): never {
 // ------------------------------------------------------------ first run --
 
 export async function setupCompany(_prev: unknown, fd: FormData): Promise<ActionResult> {
-  let toastMsg = "Company set up";
+  const toastMsg = "Company set up";
 
   try {
     const name = str(fd, "name");
@@ -62,7 +62,6 @@ export async function setupCompany(_prev: unknown, fd: FormData): Promise<Action
       branchName: str(fd, "branch_name") || "Head Office",
       warehouseName: str(fd, "warehouse_name") || "Main Warehouse",
     });
-    toastMsg = `${name} is set up`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -79,7 +78,7 @@ export async function companyExists(): Promise<boolean> {
 // --------------------------------------------------------------- partners --
 
 export async function createPartner(_prev: unknown, fd: FormData): Promise<ActionResult> {
-  let toastMsg = "Partner added";
+  const toastMsg = "Partner added";
 
   try {
     const co = await companyId();
@@ -107,7 +106,6 @@ export async function createPartner(_prev: unknown, fd: FormData): Promise<Actio
          ${str(fd, "township") || null}, ${str(fd, "address") || null},
          ${str(fd, "phone") || null}, ${num(fd, "payment_terms_days")},
          ${fd.get("credit_limit") ? num(fd, "credit_limit") : null})`;
-    toastMsg = `${code} · ${name} added`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -120,7 +118,7 @@ export async function createPartner(_prev: unknown, fd: FormData): Promise<Actio
 
 export async function createCategory(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let returnTo: string | null = null;
-  let toastMsg = "Category added";
+  const toastMsg = "Category added";
 
   try {
     const co = await companyId();
@@ -158,7 +156,6 @@ export async function createCategory(_prev: unknown, fd: FormData): Promise<Acti
       insert into item_group (company_id, parent_id, segment, code, name, name_my)
       values (${co}, ${parentId}, ${segment}, ${composed.code}, ${name},
               ${str(fd, "name_my") || null})`;
-    toastMsg = `${name} added`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -175,7 +172,7 @@ export async function createCategory(_prev: unknown, fd: FormData): Promise<Acti
  * target rather than off its parent.
  */
 export async function insertCategoryAbove(_prev: unknown, fd: FormData): Promise<ActionResult> {
-  let toastMsg = "Category inserted above";
+  const toastMsg = "Category inserted";
 
   try {
     const co = await companyId();
@@ -215,7 +212,6 @@ export async function insertCategoryAbove(_prev: unknown, fd: FormData): Promise
       await tx`
         update item_group set parent_id = ${created.id} where id = ${target.id}`;
     });
-    toastMsg = `${name} inserted above`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -281,7 +277,7 @@ export async function moveCategory(_prev: unknown, fd: FormData): Promise<Action
 
 export async function createItem(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let returnTo: string | null = null;
-  let toastMsg = "Item added";
+  const toastMsg = "Item added";
 
   try {
     const co = await companyId();
@@ -310,7 +306,6 @@ export async function createItem(_prev: unknown, fd: FormData): Promise<ActionRe
       return { error: `Code ${fullCode} is already used by ${dup[0].name}` };
     }
 
-    toastMsg = `${fullCode} · ${name} added`;
 
     await sql.begin(async (tx) => {
       const [item] = await tx`
@@ -345,7 +340,7 @@ export async function createItem(_prev: unknown, fd: FormData): Promise<ActionRe
 // ------------------------------------------------------------- brands --
 
 export async function createBrand(_prev: unknown, fd: FormData): Promise<ActionResult> {
-  let toastMsg = "Brand added";
+  const toastMsg = "Brand added";
 
   try {
     const co = await companyId();
@@ -362,7 +357,6 @@ export async function createBrand(_prev: unknown, fd: FormData): Promise<ActionR
     await sql`
       insert into brand (company_id, code, name, name_my)
       values (${co}, ${code}, ${name}, ${str(fd, "name_my") || null})`;
-    toastMsg = `${code} · ${name} added`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -573,9 +567,7 @@ export async function createSalesInvoice(_prev: unknown, fd: FormData): Promise<
     const result = toDeliver ? await postSalesInvoice(input) : await postSaleWithDelivery(input);
 
     docId = result.id;
-    const total = lines.reduce((s, l) => s + (l.focReasonId ? 0 : l.qty * l.unitPrice), 0);
-    toastMsg = `${result.docNo} posted · ${Math.round(total).toLocaleString("en-US")} MMK`
-      + (result.receiptNo ? ` · ${result.receiptNo} receipted` : "");
+    toastMsg = `Invoice ${result.docNo} posted`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -620,8 +612,7 @@ export async function createPurchaseInvoice(_prev: unknown, fd: FormData): Promi
     const result = receivedNow ? await postPurchaseWithReceipt(input) : await postPurchaseInvoice(input);
 
     docId = result.id;
-    const total = lines.reduce((s, l) => s + l.qty * l.unitPrice, 0);
-    toastMsg = `${result.docNo} posted · ${Math.round(total).toLocaleString("en-US")} MMK`;
+    toastMsg = `Invoice ${result.docNo} posted`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -700,7 +691,7 @@ export async function createSalesOrder(_prev: unknown, fd: FormData): Promise<Ac
     });
 
     docId = result.id;
-    toastMsg = `${result.docNo} saved`;
+    toastMsg = `Order ${result.docNo} saved`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -735,7 +726,7 @@ export async function createPurchaseOrder(_prev: unknown, fd: FormData): Promise
     });
 
     docId = result.id;
-    toastMsg = `${result.docNo} saved`;
+    toastMsg = `Order ${result.docNo} saved`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -758,7 +749,7 @@ export async function createDelivery(_prev: unknown, fd: FormData): Promise<Acti
     if (!str(fd, "partner_id")) return { error: "Choose a customer" };
     if (!str(fd, "location_id")) return { error: "Choose a warehouse" };
 
-    const result = await postDelivery({
+    const delivery = await postDelivery({
       companyId: co,
       partnerId: str(fd, "partner_id"),
       locationId: str(fd, "location_id"),
@@ -769,8 +760,8 @@ export async function createDelivery(_prev: unknown, fd: FormData): Promise<Acti
       lines,
     });
 
-    docId = result.id;
-    toastMsg = `${result.docNo} posted · ${lines.length} line${lines.length === 1 ? "" : "s"}`;
+    docId = delivery.id;
+    toastMsg = `Delivery ${delivery.docNo} posted`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -822,7 +813,7 @@ export async function deliverPendingInvoice(_prev: unknown, fd: FormData): Promi
     });
 
     docId = result.id;
-    toastMsg = `${result.docNo} posted`;
+    toastMsg = `Delivery ${result.docNo} posted`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -858,7 +849,7 @@ export async function createGoodsReceipt(_prev: unknown, fd: FormData): Promise<
     });
 
     docId = result.id;
-    toastMsg = `${result.docNo} posted · ${lines.length} line${lines.length === 1 ? "" : "s"}`;
+    toastMsg = `Goods receipt ${result.docNo} posted`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -889,7 +880,7 @@ function parseAllocations(fd: FormData): Allocation[] {
 async function settle(
   fd: FormData,
   kind: "pay" | "receive"
-): Promise<{ error: string } | { id: string; docNo: string; total: number }> {
+): Promise<{ error: string } | { id: string; docNo: string }> {
   const co = await companyId();
   const allocations = parseAllocations(fd);
 
@@ -917,7 +908,7 @@ async function settle(
     ? await postSupplierPayment(input)
     : await postCustomerReceipt(input);
 
-  return { id: result.id, docNo: result.docNo, total: result.total };
+  return { id: result.id, docNo: result.docNo };
 }
 
 export async function createSupplierPayment(_prev: unknown, fd: FormData): Promise<ActionResult> {
@@ -927,7 +918,7 @@ export async function createSupplierPayment(_prev: unknown, fd: FormData): Promi
     const r = await settle(fd, "pay");
     if ("error" in r) return { error: r.error };
     docId = r.id;
-    toastMsg = `${r.docNo} paid · ${Math.round(r.total).toLocaleString("en-US")} MMK`;
+    toastMsg = `Payment ${r.docNo} posted`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -946,7 +937,7 @@ export async function createCustomerReceipt(_prev: unknown, fd: FormData): Promi
     const r = await settle(fd, "receive");
     if ("error" in r) return { error: r.error };
     docId = r.id;
-    toastMsg = `${r.docNo} received · ${Math.round(r.total).toLocaleString("en-US")} MMK`;
+    toastMsg = `Receipt ${r.docNo} posted`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -1006,7 +997,7 @@ function parseVoucherLines(fd: FormData): VoucherLine[] {
 async function postVoucherFrom(
   fd: FormData,
   kind: "cash" | "bank" | "journal"
-): Promise<{ error: string } | { id: string; docNo: string; total: number }> {
+): Promise<{ error: string } | { id: string; docNo: string }> {
   const co = await companyId();
   const lines = parseVoucherLines(fd);
 
@@ -1028,8 +1019,7 @@ async function postVoucherFrom(
       : kind === "bank" ? await postBankVoucher(input)
       : await postJournalVoucher(input);
 
-  const total = lines.filter((l) => l.amount > 0).reduce((s, l) => s + l.amount, 0);
-  return { id: r.id, docNo: r.docNo, total };
+  return { id: r.id, docNo: r.docNo };
 }
 
 function financeRevalidate() {
@@ -1047,7 +1037,7 @@ export async function createCashVoucher(_prev: unknown, fd: FormData): Promise<A
     const r = await postVoucherFrom(fd, "cash");
     if ("error" in r) return { error: r.error };
     id = r.id;
-    toastMsg = `${r.docNo} posted · ${Math.round(r.total).toLocaleString("en-US")} MMK`;
+    toastMsg = `Voucher ${r.docNo} posted`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -1062,7 +1052,7 @@ export async function createBankVoucher(_prev: unknown, fd: FormData): Promise<A
     const r = await postVoucherFrom(fd, "bank");
     if ("error" in r) return { error: r.error };
     id = r.id;
-    toastMsg = `${r.docNo} posted · ${Math.round(r.total).toLocaleString("en-US")} MMK`;
+    toastMsg = `Voucher ${r.docNo} posted`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -1077,7 +1067,7 @@ export async function createJournalVoucher(_prev: unknown, fd: FormData): Promis
     const r = await postVoucherFrom(fd, "journal");
     if ("error" in r) return { error: r.error };
     id = r.id;
-    toastMsg = `${r.docNo} posted · ${Math.round(r.total).toLocaleString("en-US")} MMK`;
+    toastMsg = `Voucher ${r.docNo} posted`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -1110,7 +1100,7 @@ export async function createCashTransfer(_prev: unknown, fd: FormData): Promise<
       reference: str(fd, "reference") || null,
     });
     id = r.id;
-    toastMsg = `${r.docNo} posted · ${Math.round(amount).toLocaleString("en-US")} MMK`;
+    toastMsg = `Transfer ${r.docNo} posted`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -1133,7 +1123,7 @@ export async function createAccountOpening(_prev: unknown, fd: FormData): Promis
       lines: lines.map((l) => ({ accountId: l.accountId, amount: l.amount })),
     });
     id = r.id;
-    toastMsg = `${r.docNo} posted · ${lines.length} account${lines.length === 1 ? "" : "s"}`;
+    toastMsg = "Opening balances posted";
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -1267,7 +1257,7 @@ function isForeignKeyViolation(e: unknown): boolean {
 }
 
 export async function createLocation(_prev: unknown, fd: FormData): Promise<ActionResult> {
-  let toastMsg = "Warehouse added";
+  const toastMsg = "Warehouse added";
 
   try {
     const co = await companyId();
@@ -1286,7 +1276,6 @@ export async function createLocation(_prev: unknown, fd: FormData): Promise<Acti
       insert into location (company_id, parent_id, code, name, name_my, is_stock_location)
       values (${co}, ${parentId}, ${code}, ${name}, ${str(fd, "name_my") || null},
               ${fd.get("is_stock_location") === "on"})`;
-    toastMsg = `${code} · ${name} added`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -1296,7 +1285,7 @@ export async function createLocation(_prev: unknown, fd: FormData): Promise<Acti
 }
 
 export async function updateLocation(_prev: unknown, fd: FormData): Promise<ActionResult> {
-  let toastMsg = "Warehouse saved";
+  const toastMsg = "Warehouse updated";
 
   try {
     const co = await companyId();
@@ -1332,7 +1321,6 @@ export async function updateLocation(_prev: unknown, fd: FormData): Promise<Acti
         parent_id = ${parentId}, is_stock_location = ${fd.get("is_stock_location") === "on"},
         is_active = ${fd.get("is_active") === "on"}
       where id = ${id} and company_id = ${co}`;
-    toastMsg = `${code} · ${name} saved`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -1383,7 +1371,7 @@ export async function deleteLocation(_prev: unknown, fd: FormData): Promise<Acti
 // ------------------------------------------------------- salespersons --
 
 export async function createSalesman(_prev: unknown, fd: FormData): Promise<ActionResult> {
-  let toastMsg = "Salesperson added";
+  const toastMsg = "Salesperson added";
 
   try {
     const co = await companyId();
@@ -1401,7 +1389,6 @@ export async function createSalesman(_prev: unknown, fd: FormData): Promise<Acti
       insert into salesman (company_id, code, name, name_my, phone, location_id, commission_pct)
       values (${co}, ${code}, ${name}, ${str(fd, "name_my") || null}, ${str(fd, "phone") || null},
               ${str(fd, "location_id") || null}, ${num(fd, "commission_pct")})`;
-    toastMsg = `${code} · ${name} added`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -1411,7 +1398,7 @@ export async function createSalesman(_prev: unknown, fd: FormData): Promise<Acti
 }
 
 export async function updateSalesman(_prev: unknown, fd: FormData): Promise<ActionResult> {
-  let toastMsg = "Salesperson saved";
+  const toastMsg = "Salesperson updated";
 
   try {
     const co = await companyId();
@@ -1434,7 +1421,6 @@ export async function updateSalesman(_prev: unknown, fd: FormData): Promise<Acti
         phone = ${str(fd, "phone") || null}, location_id = ${str(fd, "location_id") || null},
         commission_pct = ${num(fd, "commission_pct")}, is_active = ${fd.get("is_active") === "on"}
       where id = ${id} and company_id = ${co}`;
-    toastMsg = `${code} · ${name} saved`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -1513,7 +1499,7 @@ function moneyFlags(kind: string): { cash: boolean; bank: boolean } {
 }
 
 export async function createAccount(_prev: unknown, fd: FormData): Promise<ActionResult> {
-  let toastMsg = "Account added";
+  const toastMsg = "Account added";
 
   try {
     const co = await companyId();
@@ -1572,7 +1558,6 @@ export async function createAccount(_prev: unknown, fd: FormData): Promise<Actio
       }
     });
 
-    toastMsg = `${code} · ${name} added`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -1582,7 +1567,7 @@ export async function createAccount(_prev: unknown, fd: FormData): Promise<Actio
 }
 
 export async function updateAccount(_prev: unknown, fd: FormData): Promise<ActionResult> {
-  let toastMsg = "Account saved";
+  const toastMsg = "Account updated";
 
   try {
     const co = await companyId();
@@ -1674,7 +1659,6 @@ export async function updateAccount(_prev: unknown, fd: FormData): Promise<Actio
       }
     });
 
-    toastMsg = `${code} · ${name} saved`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
