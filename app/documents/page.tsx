@@ -7,11 +7,11 @@ const TYPES = [
   ["PURCHASE_ORDER", "Purchase orders"],
   ["GOODS_RECEIPT", "Goods receipts"],
   ["PURCHASE_INVOICE", "Purchase invoices"],
-  ["SUPPLIER_PAYMENT", "Payments"],
+  ["SUPPLIER_PAYMENT", "Supplier payments"],
   ["SALES_ORDER", "Sales orders"],
   ["DELIVERY", "Deliveries"],
   ["SALES_INVOICE", "Sales invoices"],
-  ["CUSTOMER_RECEIPT", "Receipts"],
+  ["CUSTOMER_RECEIPT", "Customer receipts"],
 ];
 
 export default async function DocumentsPage({

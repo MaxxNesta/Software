@@ -28,6 +28,8 @@ export function SettlementForm({
   invoices,
   cashAccounts,
   today,
+  initialPartnerId,
+  initialInvoiceId,
 }: {
   kind: "pay" | "receive";
   action: (prev: unknown, fd: FormData) => Promise<ActionResult>;
@@ -35,14 +37,21 @@ export function SettlementForm({
   invoices: Invoice[];
   cashAccounts: CashAccount[];
   today: string;
+  /** Arriving from a specific document's page — jump straight to it. */
+  initialPartnerId?: string;
+  initialInvoiceId?: string;
 }) {
   const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
     action as never,
     null
   );
 
-  const [partnerId, setPartnerId] = useState("");
-  const [amounts, setAmounts] = useState<Record<string, string>>({});
+  const [partnerId, setPartnerId] = useState(initialPartnerId ?? "");
+  const [amounts, setAmounts] = useState<Record<string, string>>(() => {
+    if (!initialInvoiceId) return {};
+    const inv = invoices.find((i) => i.document_id === initialInvoiceId);
+    return inv ? { [inv.document_id]: String(Number(inv.outstanding)) } : {};
+  });
   const isPay = kind === "pay";
 
   const open = useMemo(

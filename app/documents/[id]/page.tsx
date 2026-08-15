@@ -6,7 +6,12 @@ import {
   getDocumentLines,
   getJournalForDocument,
   getDownstream,
+  getDocumentOutstanding,
+  getOpenSalesOrders,
+  getOpenPurchaseOrders,
 } from "@/lib/queries";
+import { createDelivery, createGoodsReceipt } from "@/lib/actions";
+import { FulfillOrderForm } from "@/components/fulfill-order-form";
 
 // The chain each document type sits in, so the detail page can show where
 // this document falls and what comes next.
@@ -38,6 +43,29 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
   const totalDebit = journal.reduce((s: number, l: any) => s + Number(l.debit), 0);
   const totalCredit = journal.reduce((s: number, l: any) => s + Number(l.credit), 0);
 
+  // What to do next, computed from this document alone — the whole point is
+  // not making the user go find themselves in a separate list.
+  const isOpenOrder = (doc.doc_type === "SALES_ORDER" || doc.doc_type === "PURCHASE_ORDER") && doc.status === "POSTED";
+  const isInvoice = (doc.doc_type === "SALES_INVOICE" || doc.doc_type === "PURCHASE_INVOICE") && doc.status === "POSTED";
+
+  let orderLines: {
+    lineId: string; itemId: string; itemCode: string; itemName: string;
+    remainingQty: number; expectedPrice: number;
+  }[] = [];
+  if (isOpenOrder) {
+    const open = doc.doc_type === "SALES_ORDER"
+      ? await getOpenSalesOrders(doc.company_id)
+      : await getOpenPurchaseOrders(doc.company_id);
+    orderLines = (open as any[])
+      .filter((r) => r.order_id === doc.id)
+      .map((r) => ({
+        lineId: r.line_id, itemId: r.item_id, itemCode: r.item_code, itemName: r.item_name,
+        remainingQty: Number(r.remaining_qty), expectedPrice: Number(r.expected_price ?? 0),
+      }));
+  }
+
+  const outstanding = isInvoice ? await getDocumentOutstanding(doc.id) : 0;
+
   return (
     <>
       <div className="page-head">
@@ -56,6 +84,34 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
           </span>
         ))}
       </div>
+
+      {isOpenOrder && orderLines.length > 0 && (
+        <FulfillOrderForm
+          kind={doc.doc_type === "SALES_ORDER" ? "sales" : "purchase"}
+          orderId={doc.id}
+          orderNo={doc.doc_no}
+          partnerName={doc.partner_name}
+          partnerId={doc.partner_id}
+          locationId={doc.location_id}
+          lines={orderLines}
+          action={doc.doc_type === "SALES_ORDER" ? createDelivery : createGoodsReceipt}
+        />
+      )}
+
+      {isInvoice && outstanding > 0 && (
+        <div className="actions" style={{ marginBottom: "1.5rem" }}>
+          <Link
+            href={
+              doc.doc_type === "SALES_INVOICE"
+                ? `/receivables/receive?partner=${doc.partner_id}&invoice=${doc.id}`
+                : `/payables/pay?partner=${doc.partner_id}&invoice=${doc.id}`
+            }
+            className="btn"
+          >
+            {doc.doc_type === "SALES_INVOICE" ? "Receive payment" : "Pay supplier"} — {money(outstanding)} outstanding
+          </Link>
+        </div>
+      )}
 
       <div className="grid2">
         <div className="card">

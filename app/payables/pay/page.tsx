@@ -2,7 +2,12 @@ import Link from "next/link";
 import { getSettlementData, createSupplierPayment } from "@/lib/actions";
 import { SettlementForm } from "@/components/settlement-form";
 
-export default async function PaySupplier() {
+export default async function PaySupplier({
+  searchParams,
+}: {
+  searchParams: Promise<{ partner?: string; invoice?: string }>;
+}) {
+  const { partner, invoice } = await searchParams;
   const { partners, invoices, cashAccounts } = await getSettlementData("pay");
   const today = new Date().toISOString().slice(0, 10);
 
@@ -41,6 +46,8 @@ export default async function PaySupplier() {
         invoices={invoices as never}
         cashAccounts={cashAccounts as never}
         today={today}
+        initialPartnerId={partner}
+        initialInvoiceId={invoice}
       />
     </>
   );

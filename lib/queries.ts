@@ -142,6 +142,12 @@ export async function getDownstream(documentId: string) {
      order by posting_date`;
 }
 
+/** What's still unpaid on an invoice — 0 for anything that isn't one. */
+export async function getDocumentOutstanding(documentId: string): Promise<number> {
+  const [row] = await sql`select outstanding from v_open_item where document_id = ${documentId}`;
+  return row ? Number(row.outstanding) : 0;
+}
+
 export async function getStock(companyId: string) {
   return sql`
     select item_code, item_name, location_code,
