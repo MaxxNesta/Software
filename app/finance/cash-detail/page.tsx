@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getFinanceData, getAccountLedger } from "@/lib/actions";
 import { money } from "@/lib/db";
 import { AccountPicker } from "@/components/account-picker";
@@ -22,7 +23,7 @@ export default async function CashDetail({
     <>
       <div className="page-head">
         <span className="eyebrow">Cash &amp; Bank</span>
-        <h1>Cash detail</h1>
+        <h1>Cash book</h1>
         <span className="page-sub">
           Every movement on the account with a running balance, whatever document
           caused it.
@@ -33,6 +34,10 @@ export default async function CashDetail({
         <div className="alert">No cash account is set up.</div>
       ) : (
         <>
+          <div className="actions" style={{ marginBottom: "1rem" }}>
+            <Link href="/finance/cash-book" className="btn">+ New voucher</Link>
+          </div>
+
           <AccountPicker accounts={list} selectedId={selected.id} basePath="/finance/cash-detail" />
 
           <section>

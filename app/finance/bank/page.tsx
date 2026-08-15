@@ -1,7 +1,8 @@
+import Link from "next/link";
 import { getFinanceData, createBankVoucher } from "@/lib/actions";
 import { VoucherForm } from "@/components/voucher-form";
 
-export default async function BankBook() {
+export default async function NewBankVoucher() {
   const { accounts, cashAccounts, bankAccounts, locations } = await getFinanceData();
   const today = new Date().toISOString().slice(0, 10);
   const money = bankAccounts;
@@ -11,7 +12,7 @@ export default async function BankBook() {
       <>
         <div className="page-head">
           <span className="eyebrow">Cash &amp; Bank</span>
-          <h1>Bank</h1>
+          <h1>New bank voucher</h1>
         </div>
         <div className="alert">No bank account is set up in the chart of accounts.</div>
       </>
@@ -22,8 +23,11 @@ export default async function BankBook() {
     <>
       <div className="page-head">
         <span className="eyebrow">Cash &amp; Bank</span>
-        <h1>Bank</h1>
-        <span className="page-sub">Money in and out of a bank account. Same as the cash book, against a bank rather than the till.</span>
+        <h1>New bank voucher</h1>
+        <span className="page-sub">
+          Money in and out of a bank account. Same idea as a cash voucher, against a bank rather than the till.{" "}
+          <Link href="/finance/bank-detail" style={{ color: "var(--dr)" }}>View the bank book</Link>
+        </span>
       </div>
 
       <VoucherForm
