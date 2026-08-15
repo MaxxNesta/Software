@@ -43,9 +43,15 @@ export default async function Dashboard() {
       tone: "warn",
     },
     {
-      n: Number(kpis.grir.n),
-      label: `receipt${Number(kpis.grir.n) === 1 ? "" : "s"} waiting for a supplier invoice`,
-      href: "/documents?type=GOODS_RECEIPT",
+      n: kpis.grirReceipts.n,
+      label: `goods receipt${kpis.grirReceipts.n === 1 ? "" : "s"} waiting for a supplier invoice`,
+      href: "/documents?type=GOODS_RECEIPT&open=grir",
+      tone: "warn",
+    },
+    {
+      n: kpis.grirInvoices.n,
+      label: `supplier invoice${kpis.grirInvoices.n === 1 ? "" : "s"} waiting for the goods to arrive`,
+      href: "/documents?type=PURCHASE_INVOICE&open=grir",
       tone: "warn",
     },
   ].filter((a) => a.n > 0);
@@ -90,8 +96,10 @@ export default async function Dashboard() {
         </div>
         <div className="kpi">
           <span className="kpi-label">Goods received, not invoiced</span>
-          <span className="kpi-value">{money(Math.abs(Number(kpis.grir.total)))}</span>
-          <span className="kpi-note">{kpis.grir.n} receipt{kpis.grir.n === 1 ? "" : "s"} awaiting a supplier invoice</span>
+          <span className="kpi-value">{money(Math.abs(kpis.grirReceipts.total))}</span>
+          <span className="kpi-note">
+            {kpis.grirReceipts.n} receipt{kpis.grirReceipts.n === 1 ? "" : "s"} awaiting a supplier invoice
+          </span>
         </div>
       </div>
 
@@ -226,7 +234,7 @@ export default async function Dashboard() {
               <thead>
                 <tr>
                   <th>Document</th><th>Type</th><th>Partner</th><th>Date</th>
-                  <th>From</th><th className="r">Amount</th><th>Status</th>
+                  <th>From</th><th className="r">Amount</th>
                 </tr>
               </thead>
               <tbody>
@@ -240,7 +248,6 @@ export default async function Dashboard() {
                     <td className="code">{shortDate(d.posting_date)}</td>
                     <td className="code">{d.source_doc_no ?? "—"}</td>
                     <td className="r">{money(d.gross_total)}</td>
-                    <td><span className={`pill ${d.status.toLowerCase()}`}>{d.status}</span></td>
                   </tr>
                 ))}
               </tbody>

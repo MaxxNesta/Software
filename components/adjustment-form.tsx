@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import type { ActionResult, PickerItem } from "@/lib/actions";
 import { ItemPicker } from "./item-picker";
 
@@ -41,6 +41,11 @@ export function AdjustmentForm({
 
   const [lines, setLines] = useState<Line[]>([{ key: 1, itemId: "", qty: "", unitCost: "" }]);
   const [docDate, setDocDate] = useState(today);
+  const [receivedTime, setReceivedTime] = useState("");
+
+  useEffect(() => {
+    setReceivedTime(new Date().toTimeString().slice(0, 5));
+  }, []);
 
   const byId = (id: string) => items.find((i) => i.id === id);
 
@@ -110,6 +115,13 @@ export function AdjustmentForm({
               <label htmlFor="doc_date">Date</label>
               <input id="doc_date" name="doc_date" type="date" value={docDate}
                 onChange={(e) => setDocDate(e.target.value)} required />
+            </div>
+
+            <div className="field">
+              <label htmlFor="received_time">Time</label>
+              <input id="received_time" name="received_time" type="time" value={receivedTime}
+                onChange={(e) => setReceivedTime(e.target.value)} />
+              <span className="hint">For found stock — orders same-day entries correctly for FIFO</span>
             </div>
 
             <div className="field">

@@ -73,6 +73,8 @@ export type FulfillmentInput = {
   memo?: string | null;
   reference?: string | null;
   sourceDocumentId?: string | null;
+  /** When goods actually arrived, if more precise than docDate — receipts only, ignored for deliveries. */
+  receivedAt?: string | null;
   lines: FulfillmentLine[];
 };
 
@@ -151,14 +153,19 @@ async function recordFifoConsumption(
   }
 }
 
-/** Every receipt is its own lot — a goods receipt, a sales return, a found adjustment. */
+/**
+ * Every receipt is its own lot — a goods receipt, a sales return, a found
+ * adjustment. `receivedAt` is a full timestamp when the caller has one (the
+ * actual time stock arrived, not just the document's date) — falls back to
+ * midnight on the document date otherwise, same as before this existed.
+ */
 async function createFifoLot(
   tx: TransactionSql, companyId: string, itemId: string, locationId: string,
-  receivedDate: string, unitCost: number, qty: number, stockMovementId: string
+  receivedAt: string, unitCost: number, qty: number, stockMovementId: string
 ) {
   await tx`
     insert into stock_lot (company_id, item_id, location_id, received_date, unit_cost, qty_received, stock_movement_id)
-    values (${companyId}, ${itemId}, ${locationId}, ${receivedDate}::date, ${unitCost}, ${qty}, ${stockMovementId})`;
+    values (${companyId}, ${itemId}, ${locationId}, ${receivedAt}::timestamptz, ${unitCost}, ${qty}, ${stockMovementId})`;
 }
 
 /**
@@ -653,6 +660,7 @@ async function _postGoodsReceipt(tx: TransactionSql, input: FulfillmentInput) {
   if (input.lines.length === 0) throw new Error("A goods receipt needs at least one line");
 
   const { companyId, partnerId, locationId, docDate } = input;
+  const receivedAt = input.receivedAt || docDate;
 
   const fyRows = await tx`select fn_fiscal_year_for(${companyId}, ${docDate}::date) as fy`;
   const fiscalYear = fyRows[0]?.fy ?? null;
@@ -707,7 +715,7 @@ async function _postGoodsReceipt(tx: TransactionSql, input: FulfillmentInput) {
         (${companyId}, ${line.itemId}, ${locationId}, ${docDate}::date,
          ${line.qty}, ${unitCost}, ${net}, ${doc.id})
       returning id`;
-    await createFifoLot(tx, companyId, line.itemId, locationId, docDate, unitCost, line.qty, movement.id);
+    await createFifoLot(tx, companyId, line.itemId, locationId, receivedAt, unitCost, line.qty, movement.id);
 
     const inventory = await tx`
       select fn_resolve_account_for_item(${companyId}, 'INVENTORY', ${line.itemId}) as a`;
@@ -916,6 +924,9 @@ export async function postPurchaseWithReceipt(
         partnerId: input.partnerId,
         locationId: input.locationId,
         docDate: input.docDate,
+        // "Received now" means now — the actual moment this posts, not
+        // midnight on the document date.
+        receivedAt: new Date().toISOString(),
         memo: input.memo,
         reference: input.reference,
         lines: toReceive.map((l) => ({ itemId: l.itemId, qty: l.qty, unitCost: l.unitPrice })),
@@ -947,6 +958,8 @@ export type AdjustmentInput = {
   docDate: string;
   memo?: string | null;
   reference?: string | null;
+  /** When a found-stock line actually arrived, if more precise than docDate. */
+  receivedAt?: string | null;
   lines: AdjustmentLine[];
 };
 
@@ -960,6 +973,7 @@ export async function postStockAdjustment(input: AdjustmentInput) {
 
   return sql.begin(async (tx) => {
     const { companyId, locationId, docDate } = input;
+    const receivedAt = input.receivedAt || docDate;
 
     const fyRows = await tx`select fn_fiscal_year_for(${companyId}, ${docDate}::date) as fy`;
     const fiscalYear = fyRows[0]?.fy ?? null;
@@ -1035,7 +1049,7 @@ export async function postStockAdjustment(input: AdjustmentInput) {
       if (plan) {
         await recordFifoConsumption(tx, companyId, movement.id, plan);
       } else {
-        await createFifoLot(tx, companyId, line.itemId, locationId, docDate, unitCost, line.qty, movement.id);
+        await createFifoLot(tx, companyId, line.itemId, locationId, receivedAt, unitCost, line.qty, movement.id);
       }
 
       const inventory = await tx`
@@ -1086,6 +1100,8 @@ export type ReturnInput = {
   reference?: string | null;
   /** The original sales/purchase invoice, if this return is against one. */
   sourceDocumentId?: string | null;
+  /** When returned stock actually came back in, if more precise than docDate — purchase returns ignore this, they only remove stock. */
+  receivedAt?: string | null;
   lines: ReturnLine[];
 };
 
@@ -1100,6 +1116,7 @@ export async function postSalesReturn(input: ReturnInput) {
 
   return sql.begin(async (tx) => {
     const { companyId, partnerId, locationId, docDate } = input;
+    const receivedAt = input.receivedAt || docDate;
 
     const fyRows = await tx`select fn_fiscal_year_for(${companyId}, ${docDate}::date) as fy`;
     const fiscalYear = fyRows[0]?.fy ?? null;
@@ -1165,7 +1182,7 @@ export async function postSalesReturn(input: ReturnInput) {
             (${companyId}, ${line.itemId}, ${locationId}, ${docDate}::date,
              ${line.qty}, ${unitCost}, ${totalCost}, ${doc.id})
           returning id`;
-        await createFifoLot(tx, companyId, line.itemId, locationId, docDate, unitCost, line.qty, movement.id);
+        await createFifoLot(tx, companyId, line.itemId, locationId, receivedAt, unitCost, line.qty, movement.id);
 
         const inventory = await tx`
           select fn_resolve_account_for_item(${companyId}, 'INVENTORY', ${line.itemId}) as a`;

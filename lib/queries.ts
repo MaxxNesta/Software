@@ -21,9 +21,23 @@ export async function getKpis(companyId: string) {
     select coalesce(sum(outstanding), 0) as total, count(*)::int as n
       from v_open_item where company_id = ${companyId} and doc_type = 'PURCHASE_INVOICE'`;
 
-  const [grir] = await sql`
-    select coalesce(sum(balance), 0) as total, count(*)::int as n
-      from v_grir_balance where company_id = ${companyId}`;
+  // v_grir_balance groups by whichever document posted to GR/IR clearing —
+  // a goods receipt still waiting on its bill, or a bill that arrived before
+  // the goods did. Split by doc_type: lumping both under one "receipts, not
+  // invoiced" number is wrong whenever the second case exists.
+  const grirRows = await sql`
+    select d.doc_type, coalesce(sum(g.balance), 0) as total, count(*)::int as n
+      from v_grir_balance g
+      join document d on d.id = g.document_id
+     where g.company_id = ${companyId}
+     group by d.doc_type`;
+  const grirRow = (t: string) => {
+    const r = grirRows.find((x: any) => x.doc_type === t);
+    return { total: Number(r?.total ?? 0), n: Number(r?.n ?? 0) };
+  };
+  const grirReceipts = grirRow("GOODS_RECEIPT");
+  const grirInvoices = grirRow("PURCHASE_INVOICE");
+  const grir = { total: grirReceipts.total + grirInvoices.total, n: grirReceipts.n + grirInvoices.n };
 
   const [cash] = await sql`
     select coalesce(sum(jl.base_amount), 0) as total
@@ -37,7 +51,7 @@ export async function getKpis(companyId: string) {
      where company_id = ${companyId} and doc_type = 'SALES_INVOICE'
        and aging_bucket <> 'CURRENT'`;
 
-  return { stock, ar, ap, grir, cash, overdue };
+  return { stock, ar, ap, grir, grirReceipts, grirInvoices, cash, overdue };
 }
 
 /**
@@ -127,7 +141,7 @@ export async function getOpenItems(companyId: string, docType: string) {
      order by due_date nulls last`;
 }
 
-export async function getDocuments(companyId: string, docType?: string) {
+export async function getDocuments(companyId: string, docType?: string, openGrirOnly?: boolean) {
   return sql`
     select d.id, d.doc_type, d.doc_no, d.doc_date, d.posting_date, d.due_date,
            d.status, d.gross_total, d.currency,
@@ -142,6 +156,7 @@ export async function getDocuments(companyId: string, docType?: string) {
       left join journal_entry   je  on je.id = d.journal_entry_id
      where d.company_id = ${companyId}
        ${docType ? sql`and d.doc_type = ${docType}` : sql``}
+       ${openGrirOnly ? sql`and exists (select 1 from v_grir_balance g where g.document_id = d.id)` : sql``}
      order by d.posting_date desc, d.doc_no desc`;
 }
 

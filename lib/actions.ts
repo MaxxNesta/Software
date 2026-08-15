@@ -26,6 +26,16 @@ function num(fd: FormData, key: string): number {
   return Number.isFinite(v) ? v : 0;
 }
 
+/** Combines a date field with an optional time-of-day field into one ISO
+ *  timestamp — blank time falls back to midnight, same as before either
+ *  existed. Used for stock-in events, where FIFO ordering wants to know
+ *  when stock actually arrived, not just what date it's dated. */
+function dateTime(fd: FormData, dateKey: string, timeKey: string): string {
+  const date = str(fd, dateKey);
+  const time = str(fd, timeKey);
+  return time ? `${date}T${time}` : date;
+}
+
 async function companyId(): Promise<string> {
   const [c] = await sql`select id from company order by created_at limit 1`;
   if (!c) throw new Error("No company is set up");
@@ -649,6 +659,7 @@ export async function createSalesReturn(_prev: unknown, fd: FormData): Promise<A
       partnerId: str(fd, "partner_id"),
       locationId: str(fd, "location_id"),
       docDate: str(fd, "doc_date"),
+      receivedAt: dateTime(fd, "doc_date", "received_time"),
       memo: str(fd, "memo") || null,
       reference: str(fd, "reference") || null,
       sourceDocumentId: str(fd, "source_document_id") || null,
@@ -924,6 +935,7 @@ export async function createGoodsReceipt(_prev: unknown, fd: FormData): Promise<
       partnerId: str(fd, "partner_id"),
       locationId: str(fd, "location_id"),
       docDate: str(fd, "doc_date"),
+      receivedAt: dateTime(fd, "doc_date", "received_time"),
       memo: str(fd, "memo") || null,
       reference: str(fd, "reference") || null,
       sourceDocumentId: str(fd, "source_document_id") || null,
@@ -1584,6 +1596,7 @@ export async function createStockAdjustment(_prev: unknown, fd: FormData): Promi
       companyId: co,
       locationId: str(fd, "location_id"),
       docDate: str(fd, "doc_date"),
+      receivedAt: dateTime(fd, "doc_date", "received_time"),
       memo: str(fd, "memo") || null,
       reference: str(fd, "reference") || null,
       lines,
