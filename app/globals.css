@@ -14,7 +14,7 @@
   --ghost:     #9AA4B2;
 
   --sans: var(--font-inter), system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --mono: ui-monospace, "Cascadia Mono", "SF Mono", "Segoe UI Mono", "Roboto Mono", Menlo, Consolas, monospace;
+  --mono: var(--font-geist-mono), ui-monospace, "Cascadia Mono", "SF Mono", "Segoe UI Mono", "Roboto Mono", Menlo, Consolas, monospace;
 
   --s1: 0.35rem; --s2: 0.65rem; --s3: 1rem; --s4: 1.5rem; --s5: 2.25rem; --s6: 3.25rem;
 
@@ -87,9 +87,9 @@ a { color: inherit; text-decoration: none; }
   padding: 0 var(--s4) var(--s1);
 }
 .navlink {
-  padding: 0.42rem var(--s4);
+  padding: 0.38rem var(--s4) 0.38rem calc(var(--s4) + 0.9rem);
   color: var(--ink-soft);
-  font-size: 0.88rem;
+  font-size: 0.82rem;
   border-left: 2px solid transparent;
   transition: background-color 150ms, color 150ms;
 }
@@ -379,8 +379,8 @@ button.tiny { padding: 0.16rem 0.5rem; font-size: 0.78rem; }
   display: flex; align-items: center; justify-content: space-between;
   width: 100%; background: transparent; border: none; border-radius: 0;
   padding: 0.3rem var(--s4) 0.3rem;
-  font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.12em;
-  text-transform: uppercase; color: var(--muted); font-weight: 400;
+  font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--muted); font-weight: 700;
   cursor: pointer;
 }
 .navhead:hover { color: var(--ink); opacity: 1; }
