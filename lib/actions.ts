@@ -30,9 +30,17 @@ async function companyId(): Promise<string> {
   return c.id;
 }
 
+/** Redirects with a one-shot confirmation the destination page pops as a toast. */
+function redirectWithToast(path: string, message: string): never {
+  const sep = path.includes("?") ? "&" : "?";
+  redirect(`${path}${sep}toast=${encodeURIComponent(message)}`);
+}
+
 // ------------------------------------------------------------ first run --
 
 export async function setupCompany(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let toastMsg = "Company set up";
+
   try {
     const name = str(fd, "name");
     const code = str(fd, "code").toUpperCase();
@@ -54,12 +62,13 @@ export async function setupCompany(_prev: unknown, fd: FormData): Promise<Action
       branchName: str(fd, "branch_name") || "Head Office",
       warehouseName: str(fd, "warehouse_name") || "Main Warehouse",
     });
+    toastMsg = `${name} is set up`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
 
   revalidatePath("/", "layout");
-  redirect("/items/categories");
+  redirectWithToast("/items/categories", toastMsg);
 }
 
 export async function companyExists(): Promise<boolean> {
@@ -70,6 +79,8 @@ export async function companyExists(): Promise<boolean> {
 // --------------------------------------------------------------- partners --
 
 export async function createPartner(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let toastMsg = "Partner added";
+
   try {
     const co = await companyId();
 
@@ -96,18 +107,20 @@ export async function createPartner(_prev: unknown, fd: FormData): Promise<Actio
          ${str(fd, "township") || null}, ${str(fd, "address") || null},
          ${str(fd, "phone") || null}, ${num(fd, "payment_terms_days")},
          ${fd.get("credit_limit") ? num(fd, "credit_limit") : null})`;
+    toastMsg = `${code} · ${name} added`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
 
   revalidatePath("/partners");
-  redirect("/partners");
+  redirectWithToast("/partners", toastMsg);
 }
 
 // ------------------------------------------------------ categories & items --
 
 export async function createCategory(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let returnTo: string | null = null;
+  let toastMsg = "Category added";
 
   try {
     const co = await companyId();
@@ -145,13 +158,14 @@ export async function createCategory(_prev: unknown, fd: FormData): Promise<Acti
       insert into item_group (company_id, parent_id, segment, code, name, name_my)
       values (${co}, ${parentId}, ${segment}, ${composed.code}, ${name},
               ${str(fd, "name_my") || null})`;
+    toastMsg = `${name} added`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
 
   revalidatePath("/items/categories");
   revalidatePath("/items/new");
-  redirect(returnTo || "/items/categories");
+  redirectWithToast(returnTo || "/items/categories", toastMsg);
 }
 
 /**
@@ -161,6 +175,8 @@ export async function createCategory(_prev: unknown, fd: FormData): Promise<Acti
  * target rather than off its parent.
  */
 export async function insertCategoryAbove(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let toastMsg = "Category inserted above";
+
   try {
     const co = await companyId();
 
@@ -199,13 +215,14 @@ export async function insertCategoryAbove(_prev: unknown, fd: FormData): Promise
       await tx`
         update item_group set parent_id = ${created.id} where id = ${target.id}`;
     });
+    toastMsg = `${name} inserted above`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
 
   revalidatePath("/items/categories");
   revalidatePath("/items/new");
-  redirect("/items/categories");
+  redirectWithToast("/items/categories", toastMsg);
 }
 
 /** Re-parents a category. Refuses moves that would make the tree cyclic. */
@@ -259,11 +276,12 @@ export async function moveCategory(_prev: unknown, fd: FormData): Promise<Action
 
   revalidatePath("/items/categories");
   revalidatePath("/items/new");
-  redirect("/items/categories");
+  redirectWithToast("/items/categories", "Category moved");
 }
 
 export async function createItem(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let returnTo: string | null = null;
+  let toastMsg = "Item added";
 
   try {
     const co = await companyId();
@@ -292,6 +310,8 @@ export async function createItem(_prev: unknown, fd: FormData): Promise<ActionRe
       return { error: `Code ${fullCode} is already used by ${dup[0].name}` };
     }
 
+    toastMsg = `${fullCode} · ${name} added`;
+
     await sql.begin(async (tx) => {
       const [item] = await tx`
         insert into item
@@ -319,12 +339,14 @@ export async function createItem(_prev: unknown, fd: FormData): Promise<ActionRe
   revalidatePath("/items");
   revalidatePath("/items/categories");
   revalidatePath("/items/stock");
-  redirect(returnTo || "/items");
+  redirectWithToast(returnTo || "/items", toastMsg);
 }
 
 // ------------------------------------------------------------- brands --
 
 export async function createBrand(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let toastMsg = "Brand added";
+
   try {
     const co = await companyId();
 
@@ -340,13 +362,14 @@ export async function createBrand(_prev: unknown, fd: FormData): Promise<ActionR
     await sql`
       insert into brand (company_id, code, name, name_my)
       values (${co}, ${code}, ${name}, ${str(fd, "name_my") || null})`;
+    toastMsg = `${code} · ${name} added`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
 
   revalidatePath("/items/brands");
   revalidatePath("/items/new");
-  redirect("/items/brands");
+  redirectWithToast("/items/brands", toastMsg);
 }
 
 export type NewBrandInput = { name: string; nameMy?: string };
@@ -514,6 +537,7 @@ function parseLines(fd: FormData): InvoiceLine[] {
 
 export async function createSalesInvoice(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let docId: string;
+  let toastMsg = "Sales invoice posted";
 
   try {
     const co = await companyId();
@@ -549,6 +573,9 @@ export async function createSalesInvoice(_prev: unknown, fd: FormData): Promise<
     const result = toDeliver ? await postSalesInvoice(input) : await postSaleWithDelivery(input);
 
     docId = result.id;
+    const total = lines.reduce((s, l) => s + (l.focReasonId ? 0 : l.qty * l.unitPrice), 0);
+    toastMsg = `${result.docNo} posted · ${Math.round(total).toLocaleString("en-US")} MMK`
+      + (result.receiptNo ? ` · ${result.receiptNo} receipted` : "");
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -559,11 +586,12 @@ export async function createSalesInvoice(_prev: unknown, fd: FormData): Promise<
   revalidatePath("/ledger");
   revalidatePath("/items");
   revalidatePath("/items/stock");
-  redirect(`/documents/${docId}`);
+  redirectWithToast(`/documents/${docId}`, toastMsg);
 }
 
 export async function createPurchaseInvoice(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let docId: string;
+  let toastMsg = "Purchase invoice posted";
 
   try {
     const co = await companyId();
@@ -592,6 +620,8 @@ export async function createPurchaseInvoice(_prev: unknown, fd: FormData): Promi
     const result = receivedNow ? await postPurchaseWithReceipt(input) : await postPurchaseInvoice(input);
 
     docId = result.id;
+    const total = lines.reduce((s, l) => s + l.qty * l.unitPrice, 0);
+    toastMsg = `${result.docNo} posted · ${Math.round(total).toLocaleString("en-US")} MMK`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -602,7 +632,7 @@ export async function createPurchaseInvoice(_prev: unknown, fd: FormData): Promi
   revalidatePath("/ledger");
   revalidatePath("/items");
   revalidatePath("/items/stock");
-  redirect(`/documents/${docId}`);
+  redirectWithToast(`/documents/${docId}`, toastMsg);
 }
 
 // -------------------------------------------------- orders & fulfilment --
@@ -648,6 +678,7 @@ function parseFulfillmentLines(fd: FormData): FulfillmentLine[] {
 
 export async function createSalesOrder(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let docId: string;
+  let toastMsg = "Sales order saved";
 
   try {
     const co = await companyId();
@@ -669,6 +700,7 @@ export async function createSalesOrder(_prev: unknown, fd: FormData): Promise<Ac
     });
 
     docId = result.id;
+    toastMsg = `${result.docNo} saved`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -676,11 +708,12 @@ export async function createSalesOrder(_prev: unknown, fd: FormData): Promise<Ac
   revalidatePath("/documents");
   revalidatePath("/sales/orders");
   revalidatePath("/items/stock");
-  redirect(`/documents/${docId}`);
+  redirectWithToast(`/documents/${docId}`, toastMsg);
 }
 
 export async function createPurchaseOrder(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let docId: string;
+  let toastMsg = "Purchase order saved";
 
   try {
     const co = await companyId();
@@ -702,6 +735,7 @@ export async function createPurchaseOrder(_prev: unknown, fd: FormData): Promise
     });
 
     docId = result.id;
+    toastMsg = `${result.docNo} saved`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -709,11 +743,12 @@ export async function createPurchaseOrder(_prev: unknown, fd: FormData): Promise
   revalidatePath("/documents");
   revalidatePath("/purchases/orders");
   revalidatePath("/items/stock");
-  redirect(`/documents/${docId}`);
+  redirectWithToast(`/documents/${docId}`, toastMsg);
 }
 
 export async function createDelivery(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let docId: string;
+  let toastMsg = "Delivery posted";
 
   try {
     const co = await companyId();
@@ -735,6 +770,7 @@ export async function createDelivery(_prev: unknown, fd: FormData): Promise<Acti
     });
 
     docId = result.id;
+    toastMsg = `${result.docNo} posted · ${lines.length} line${lines.length === 1 ? "" : "s"}`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -742,7 +778,7 @@ export async function createDelivery(_prev: unknown, fd: FormData): Promise<Acti
   revalidatePath("/documents");
   revalidatePath("/items");
   revalidatePath("/items/stock");
-  redirect(`/documents/${docId}`);
+  redirectWithToast(`/documents/${docId}`, toastMsg);
 }
 
 /**
@@ -752,6 +788,7 @@ export async function createDelivery(_prev: unknown, fd: FormData): Promise<Acti
  */
 export async function deliverPendingInvoice(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let docId: string;
+  let toastMsg = "Delivery posted";
 
   try {
     const co = await companyId();
@@ -785,6 +822,7 @@ export async function deliverPendingInvoice(_prev: unknown, fd: FormData): Promi
     });
 
     docId = result.id;
+    toastMsg = `${result.docNo} posted`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -793,11 +831,12 @@ export async function deliverPendingInvoice(_prev: unknown, fd: FormData): Promi
   revalidatePath("/sales/deliver");
   revalidatePath("/items");
   revalidatePath("/items/stock");
-  redirect(`/documents/${docId}`);
+  redirectWithToast(`/documents/${docId}`, toastMsg);
 }
 
 export async function createGoodsReceipt(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let docId: string;
+  let toastMsg = "Goods receipt posted";
 
   try {
     const co = await companyId();
@@ -819,6 +858,7 @@ export async function createGoodsReceipt(_prev: unknown, fd: FormData): Promise<
     });
 
     docId = result.id;
+    toastMsg = `${result.docNo} posted · ${lines.length} line${lines.length === 1 ? "" : "s"}`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -826,7 +866,7 @@ export async function createGoodsReceipt(_prev: unknown, fd: FormData): Promise<
   revalidatePath("/documents");
   revalidatePath("/items");
   revalidatePath("/items/stock");
-  redirect(`/documents/${docId}`);
+  redirectWithToast(`/documents/${docId}`, toastMsg);
 }
 
 // ------------------------------------------------------------- settlement --
@@ -849,7 +889,7 @@ function parseAllocations(fd: FormData): Allocation[] {
 async function settle(
   fd: FormData,
   kind: "pay" | "receive"
-): Promise<{ error: string } | { id: string }> {
+): Promise<{ error: string } | { id: string; docNo: string; total: number }> {
   const co = await companyId();
   const allocations = parseAllocations(fd);
 
@@ -877,15 +917,17 @@ async function settle(
     ? await postSupplierPayment(input)
     : await postCustomerReceipt(input);
 
-  return { id: result.id };
+  return { id: result.id, docNo: result.docNo, total: result.total };
 }
 
 export async function createSupplierPayment(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let docId: string;
+  let toastMsg = "Payment posted";
   try {
     const r = await settle(fd, "pay");
     if ("error" in r) return { error: r.error };
     docId = r.id;
+    toastMsg = `${r.docNo} paid · ${Math.round(r.total).toLocaleString("en-US")} MMK`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -894,15 +936,17 @@ export async function createSupplierPayment(_prev: unknown, fd: FormData): Promi
   revalidatePath("/payables");
   revalidatePath("/documents");
   revalidatePath("/ledger");
-  redirect(`/documents/${docId}`);
+  redirectWithToast(`/documents/${docId}`, toastMsg);
 }
 
 export async function createCustomerReceipt(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let docId: string;
+  let toastMsg = "Receipt posted";
   try {
     const r = await settle(fd, "receive");
     if ("error" in r) return { error: r.error };
     docId = r.id;
+    toastMsg = `${r.docNo} received · ${Math.round(r.total).toLocaleString("en-US")} MMK`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -911,7 +955,7 @@ export async function createCustomerReceipt(_prev: unknown, fd: FormData): Promi
   revalidatePath("/receivables");
   revalidatePath("/documents");
   revalidatePath("/ledger");
-  redirect(`/documents/${docId}`);
+  redirectWithToast(`/documents/${docId}`, toastMsg);
 }
 
 /** Open invoices for one partner, for the settlement screens. */
@@ -962,7 +1006,7 @@ function parseVoucherLines(fd: FormData): VoucherLine[] {
 async function postVoucherFrom(
   fd: FormData,
   kind: "cash" | "bank" | "journal"
-): Promise<{ error: string } | { id: string }> {
+): Promise<{ error: string } | { id: string; docNo: string; total: number }> {
   const co = await companyId();
   const lines = parseVoucherLines(fd);
 
@@ -984,7 +1028,8 @@ async function postVoucherFrom(
       : kind === "bank" ? await postBankVoucher(input)
       : await postJournalVoucher(input);
 
-  return { id: r.id };
+  const total = lines.filter((l) => l.amount > 0).reduce((s, l) => s + l.amount, 0);
+  return { id: r.id, docNo: r.docNo, total };
 }
 
 function financeRevalidate() {
@@ -997,45 +1042,52 @@ function financeRevalidate() {
 
 export async function createCashVoucher(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let id: string;
+  let toastMsg = "Cash voucher posted";
   try {
     const r = await postVoucherFrom(fd, "cash");
     if ("error" in r) return { error: r.error };
     id = r.id;
+    toastMsg = `${r.docNo} posted · ${Math.round(r.total).toLocaleString("en-US")} MMK`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
   financeRevalidate();
-  redirect(`/documents/${id}`);
+  redirectWithToast(`/documents/${id}`, toastMsg);
 }
 
 export async function createBankVoucher(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let id: string;
+  let toastMsg = "Bank voucher posted";
   try {
     const r = await postVoucherFrom(fd, "bank");
     if ("error" in r) return { error: r.error };
     id = r.id;
+    toastMsg = `${r.docNo} posted · ${Math.round(r.total).toLocaleString("en-US")} MMK`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
   financeRevalidate();
-  redirect(`/documents/${id}`);
+  redirectWithToast(`/documents/${id}`, toastMsg);
 }
 
 export async function createJournalVoucher(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let id: string;
+  let toastMsg = "Journal voucher posted";
   try {
     const r = await postVoucherFrom(fd, "journal");
     if ("error" in r) return { error: r.error };
     id = r.id;
+    toastMsg = `${r.docNo} posted · ${Math.round(r.total).toLocaleString("en-US")} MMK`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
   financeRevalidate();
-  redirect(`/documents/${id}`);
+  redirectWithToast(`/documents/${id}`, toastMsg);
 }
 
 export async function createCashTransfer(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let id: string;
+  let toastMsg = "Transfer posted";
   try {
     const co = await companyId();
     const from = str(fd, "from_account_id");
@@ -1058,15 +1110,17 @@ export async function createCashTransfer(_prev: unknown, fd: FormData): Promise<
       reference: str(fd, "reference") || null,
     });
     id = r.id;
+    toastMsg = `${r.docNo} posted · ${Math.round(amount).toLocaleString("en-US")} MMK`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
   financeRevalidate();
-  redirect(`/documents/${id}`);
+  redirectWithToast(`/documents/${id}`, toastMsg);
 }
 
 export async function createAccountOpening(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let id: string;
+  let toastMsg = "Opening balances posted";
   try {
     const co = await companyId();
     const lines = parseVoucherLines(fd);
@@ -1079,11 +1133,12 @@ export async function createAccountOpening(_prev: unknown, fd: FormData): Promis
       lines: lines.map((l) => ({ accountId: l.accountId, amount: l.amount })),
     });
     id = r.id;
+    toastMsg = `${r.docNo} posted · ${lines.length} account${lines.length === 1 ? "" : "s"}`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
   financeRevalidate();
-  redirect(`/documents/${id}`);
+  redirectWithToast(`/documents/${id}`, toastMsg);
 }
 
 /** Accounts and locations for the finance voucher screens. */
@@ -1212,6 +1267,8 @@ function isForeignKeyViolation(e: unknown): boolean {
 }
 
 export async function createLocation(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let toastMsg = "Warehouse added";
+
   try {
     const co = await companyId();
 
@@ -1229,15 +1286,18 @@ export async function createLocation(_prev: unknown, fd: FormData): Promise<Acti
       insert into location (company_id, parent_id, code, name, name_my, is_stock_location)
       values (${co}, ${parentId}, ${code}, ${name}, ${str(fd, "name_my") || null},
               ${fd.get("is_stock_location") === "on"})`;
+    toastMsg = `${code} · ${name} added`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
 
   revalidatePath("/warehouses");
-  redirect("/warehouses");
+  redirectWithToast("/warehouses", toastMsg);
 }
 
 export async function updateLocation(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let toastMsg = "Warehouse saved";
+
   try {
     const co = await companyId();
 
@@ -1272,12 +1332,13 @@ export async function updateLocation(_prev: unknown, fd: FormData): Promise<Acti
         parent_id = ${parentId}, is_stock_location = ${fd.get("is_stock_location") === "on"},
         is_active = ${fd.get("is_active") === "on"}
       where id = ${id} and company_id = ${co}`;
+    toastMsg = `${code} · ${name} saved`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
 
   revalidatePath("/warehouses");
-  redirect("/warehouses");
+  redirectWithToast("/warehouses", toastMsg);
 }
 
 /** Deactivates a warehouse without touching any history that points at it. */
@@ -1293,7 +1354,7 @@ export async function deactivateLocation(_prev: unknown, fd: FormData): Promise<
   }
 
   revalidatePath("/warehouses");
-  redirect("/warehouses");
+  redirectWithToast("/warehouses", "Warehouse deactivated");
 }
 
 /**
@@ -1316,12 +1377,14 @@ export async function deleteLocation(_prev: unknown, fd: FormData): Promise<Acti
   }
 
   revalidatePath("/warehouses");
-  redirect("/warehouses");
+  redirectWithToast("/warehouses", "Warehouse deleted");
 }
 
 // ------------------------------------------------------- salespersons --
 
 export async function createSalesman(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let toastMsg = "Salesperson added";
+
   try {
     const co = await companyId();
 
@@ -1338,15 +1401,18 @@ export async function createSalesman(_prev: unknown, fd: FormData): Promise<Acti
       insert into salesman (company_id, code, name, name_my, phone, location_id, commission_pct)
       values (${co}, ${code}, ${name}, ${str(fd, "name_my") || null}, ${str(fd, "phone") || null},
               ${str(fd, "location_id") || null}, ${num(fd, "commission_pct")})`;
+    toastMsg = `${code} · ${name} added`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
 
   revalidatePath("/salespersons");
-  redirect("/salespersons");
+  redirectWithToast("/salespersons", toastMsg);
 }
 
 export async function updateSalesman(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let toastMsg = "Salesperson saved";
+
   try {
     const co = await companyId();
 
@@ -1368,12 +1434,13 @@ export async function updateSalesman(_prev: unknown, fd: FormData): Promise<Acti
         phone = ${str(fd, "phone") || null}, location_id = ${str(fd, "location_id") || null},
         commission_pct = ${num(fd, "commission_pct")}, is_active = ${fd.get("is_active") === "on"}
       where id = ${id} and company_id = ${co}`;
+    toastMsg = `${code} · ${name} saved`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
 
   revalidatePath("/salespersons");
-  redirect("/salespersons");
+  redirectWithToast("/salespersons", toastMsg);
 }
 
 export async function deactivateSalesman(_prev: unknown, fd: FormData): Promise<ActionResult> {
@@ -1388,7 +1455,7 @@ export async function deactivateSalesman(_prev: unknown, fd: FormData): Promise<
   }
 
   revalidatePath("/salespersons");
-  redirect("/salespersons");
+  redirectWithToast("/salespersons", "Salesperson deactivated");
 }
 
 export async function deleteSalesman(_prev: unknown, fd: FormData): Promise<ActionResult> {
@@ -1406,5 +1473,5 @@ export async function deleteSalesman(_prev: unknown, fd: FormData): Promise<Acti
   }
 
   revalidatePath("/salespersons");
-  redirect("/salespersons");
+  redirectWithToast("/salespersons", "Salesperson deleted");
 }

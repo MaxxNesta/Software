@@ -3,6 +3,7 @@ import "./globals.css";
 import Link from "next/link";
 import { getCompany } from "@/lib/queries";
 import { NavLink, NavGroup } from "./nav";
+import { Toast } from "@/components/toast";
 
 export const metadata: Metadata = {
   title: "Myanmar ERP",
@@ -118,6 +119,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </div>
           </main>
         </div>
+        <Toast />
       </body>
     </html>
   );
