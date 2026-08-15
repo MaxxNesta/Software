@@ -32,9 +32,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <span className="brand-sub">{company?.base_currency ?? "not set up"}</span>
             </div>
 
-            <NavGroup label="Overview" match={["/", "/ledger"]}>
+            <NavGroup label="Overview" match={["/"]}>
               <NavLink href="/">Dashboard</NavLink>
-              <NavLink href="/ledger">Trial balance</NavLink>
               <NavLink href="/documents">All documents</NavLink>
             </NavGroup>
 
@@ -54,23 +53,32 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <NavLink href="/payables" exact>Payables</NavLink>
             </NavGroup>
 
-            <NavGroup label="Reports" match={["/finance/income-statement", "/finance/balance-sheet", "/finance/cash-flow"]}>
-              <NavLink href="/finance/income-statement">Income statement</NavLink>
-              <NavLink href="/finance/balance-sheet">Balance sheet</NavLink>
-              <NavLink href="/finance/cash-flow">Cash flow</NavLink>
-            </NavGroup>
-
             <NavGroup label="Cash &amp; Bank" match={[
-              "/finance/cash-book", "/finance/bank", "/finance/journal", "/finance/transfer",
-              "/finance/opening", "/finance/cash-detail", "/finance/bank-detail",
+              "/finance/cash-detail", "/finance/bank-detail",
+              "/finance/cash-receipt", "/finance/cash-payment",
+              "/finance/bank-receipt", "/finance/bank-payment",
+              "/finance/transfer",
             ]}>
               <NavLink href="/finance/cash-detail">Cash book</NavLink>
               <NavLink href="/finance/bank-detail">Bank book</NavLink>
-              <NavLink href="/finance/cash-book">New cash voucher</NavLink>
-              <NavLink href="/finance/bank">New bank voucher</NavLink>
-              <NavLink href="/finance/journal">Journal</NavLink>
+              <NavLink href="/finance/cash-receipt">Cash receipt</NavLink>
+              <NavLink href="/finance/cash-payment">Cash payment</NavLink>
+              <NavLink href="/finance/bank-receipt">Bank receipt</NavLink>
+              <NavLink href="/finance/bank-payment">Bank payment</NavLink>
               <NavLink href="/finance/transfer">Interbranch transfer</NavLink>
-              <NavLink href="/finance/opening">Account opening</NavLink>
+            </NavGroup>
+
+            <NavGroup label="Accounting" match={[
+              "/finance/journal", "/finance/opening", "/finance/general-ledger", "/ledger",
+              "/finance/income-statement", "/finance/balance-sheet", "/finance/cash-flow",
+            ]}>
+              <NavLink href="/finance/journal">Journal entries</NavLink>
+              <NavLink href="/finance/opening">Opening balances</NavLink>
+              <NavLink href="/finance/general-ledger">General ledger</NavLink>
+              <NavLink href="/ledger">Trial balance</NavLink>
+              <NavLink href="/finance/income-statement">Income statement</NavLink>
+              <NavLink href="/finance/balance-sheet">Balance sheet</NavLink>
+              <NavLink href="/finance/cash-flow">Cash flow</NavLink>
             </NavGroup>
 
             <NavGroup label="Master data" match={["/items", "/partners", "/warehouses", "/salespersons"]}>

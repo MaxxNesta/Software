@@ -1,16 +1,15 @@
-import Link from "next/link";
 import { getFinanceData, getAccountLedger } from "@/lib/actions";
 import { money } from "@/lib/db";
 import { AccountPicker } from "@/components/account-picker";
 
-export default async function BankDetail({
+export default async function GeneralLedger({
   searchParams,
 }: {
   searchParams: Promise<{ account?: string; from?: string; to?: string }>;
 }) {
   const { account, from, to } = await searchParams;
   const data = await getFinanceData();
-  const list = data.bankAccounts as never as { id: string; code: string; name: string }[];
+  const list = data.accounts as never as { id: string; code: string; name: string }[];
 
   const selected = list.find((a) => a.id === account) ?? list[0];
   const rows = selected ? await getAccountLedger(selected.id, from, to) : [];
@@ -22,24 +21,21 @@ export default async function BankDetail({
   return (
     <>
       <div className="page-head">
-        <span className="eyebrow">Cash &amp; Bank</span>
-        <h1>Bank book</h1>
+        <span className="eyebrow">Accounting</span>
+        <h1>General ledger</h1>
         <span className="page-sub">
-          Every movement on the account with a running balance, whatever document
-          caused it.
+          Every movement on any account, with a running balance, whatever
+          document caused it. Cash and bank accounts have their own books
+          with a running till/account balance — this is the same idea for
+          everything else: inventory, revenue, expense, equity.
         </span>
       </div>
 
       {list.length === 0 ? (
-        <div className="alert">No bank account is set up.</div>
+        <div className="empty">No accounts are set up.</div>
       ) : (
         <>
-          <div className="actions" style={{ marginBottom: "1rem" }}>
-            <Link href="/finance/bank-receipt" className="btn">+ Bank receipt</Link>
-            <Link href="/finance/bank-payment" className="btn ghost">+ Bank payment</Link>
-          </div>
-
-          <AccountPicker accounts={list} selectedId={selected.id} basePath="/finance/bank-detail" />
+          <AccountPicker accounts={list} selectedId={selected.id} basePath="/finance/general-ledger" />
 
           <section>
             <div className="card">
@@ -58,7 +54,7 @@ export default async function BankDetail({
                     <thead>
                       <tr>
                         <th>Date</th><th>Entry</th><th>Document</th><th>Narration</th>
-                        <th className="r">In</th><th className="r">Out</th><th className="r">Balance</th>
+                        <th className="r">Debit</th><th className="r">Credit</th><th className="r">Balance</th>
                       </tr>
                     </thead>
                     <tbody>

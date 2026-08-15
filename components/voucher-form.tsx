@@ -35,6 +35,7 @@ export function VoucherForm({
   moneyAccounts,
   today,
   nextNo,
+  presetDirection,
 }: {
   kind: "cash" | "bank" | "journal";
   action: (prev: unknown, fd: FormData) => Promise<ActionResult>;
@@ -43,6 +44,8 @@ export function VoucherForm({
   moneyAccounts: Account[];
   today: string;
   nextNo: string;
+  /** Locks the direction and hides the toggle — a receipt is always in, a payment always out. */
+  presetDirection?: "in" | "out";
 }) {
   const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
     action as never,
@@ -53,7 +56,7 @@ export function VoucherForm({
 
   // Simple mode: one money account, a direction, and the other side.
   const [moneyId, setMoneyId] = useState(moneyAccounts[0]?.id ?? "");
-  const [direction, setDirection] = useState<"in" | "out">("out");
+  const [direction, setDirection] = useState<"in" | "out">(presetDirection ?? "out");
   const [otherId, setOtherId] = useState("");
   const [amount, setAmount] = useState("");
 
@@ -152,17 +155,19 @@ export function VoucherForm({
                 </select>
               </div>
 
-              <div className="field">
-                <label htmlFor="direction">Direction</label>
-                <select id="direction" value={direction}
-                  onChange={(e) => setDirection(e.target.value as "in" | "out")}>
-                  <option value="out">Paid out</option>
-                  <option value="in">Received in</option>
-                </select>
-                <span className="hint">
-                  {direction === "out" ? "Money leaves this account" : "Money arrives in this account"}
-                </span>
-              </div>
+              {!presetDirection && (
+                <div className="field">
+                  <label htmlFor="direction">Direction</label>
+                  <select id="direction" value={direction}
+                    onChange={(e) => setDirection(e.target.value as "in" | "out")}>
+                    <option value="out">Paid out</option>
+                    <option value="in">Received in</option>
+                  </select>
+                  <span className="hint">
+                    {direction === "out" ? "Money leaves this account" : "Money arrives in this account"}
+                  </span>
+                </div>
+              )}
 
               <div className="field">
                 <label htmlFor="other">{direction === "out" ? "Paid for" : "Received from"}</label>

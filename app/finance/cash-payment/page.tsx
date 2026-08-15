@@ -2,17 +2,16 @@ import Link from "next/link";
 import { getFinanceData, createCashVoucher } from "@/lib/actions";
 import { VoucherForm } from "@/components/voucher-form";
 
-export default async function NewCashVoucher() {
-  const { accounts, cashAccounts, bankAccounts, locations } = await getFinanceData();
+export default async function CashPayment() {
+  const { accounts, cashAccounts, locations } = await getFinanceData();
   const today = new Date().toISOString().slice(0, 10);
-  const money = cashAccounts;
 
   if (cashAccounts.length === 0) {
     return (
       <>
         <div className="page-head">
           <span className="eyebrow">Cash &amp; Bank</span>
-          <h1>New cash voucher</h1>
+          <h1>Cash payment</h1>
         </div>
         <div className="alert">No cash account is set up. Mark one in the chart of accounts as a till.</div>
       </>
@@ -23,9 +22,10 @@ export default async function NewCashVoucher() {
     <>
       <div className="page-head">
         <span className="eyebrow">Cash &amp; Bank</span>
-        <h1>New cash voucher</h1>
+        <h1>Cash payment</h1>
         <span className="page-sub">
-          Money in and out of the till. Pick the account it went to or came from, and the entry posts both sides.{" "}
+          Money paid out of the till that isn&rsquo;t against a supplier bill — use{" "}
+          <Link href="/payables/pay" style={{ color: "var(--dr)" }}>Pay supplier</Link> for that.{" "}
           <Link href="/finance/cash-detail" style={{ color: "var(--dr)" }}>View the cash book</Link>
         </span>
       </div>
@@ -35,9 +35,10 @@ export default async function NewCashVoucher() {
         action={createCashVoucher}
         accounts={accounts as never}
         locations={locations as never}
-        moneyAccounts={money as never}
+        moneyAccounts={cashAccounts as never}
         today={today}
         nextNo="CV-"
+        presetDirection="out"
       />
     </>
   );

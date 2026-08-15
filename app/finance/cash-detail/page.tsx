@@ -35,7 +35,8 @@ export default async function CashDetail({
       ) : (
         <>
           <div className="actions" style={{ marginBottom: "1rem" }}>
-            <Link href="/finance/cash-book" className="btn">+ New voucher</Link>
+            <Link href="/finance/cash-receipt" className="btn">+ Cash receipt</Link>
+            <Link href="/finance/cash-payment" className="btn ghost">+ Cash payment</Link>
           </div>
 
           <AccountPicker accounts={list} selectedId={selected.id} basePath="/finance/cash-detail" />

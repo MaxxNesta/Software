@@ -2,17 +2,16 @@ import Link from "next/link";
 import { getFinanceData, createBankVoucher } from "@/lib/actions";
 import { VoucherForm } from "@/components/voucher-form";
 
-export default async function NewBankVoucher() {
-  const { accounts, cashAccounts, bankAccounts, locations } = await getFinanceData();
+export default async function BankPayment() {
+  const { accounts, bankAccounts, locations } = await getFinanceData();
   const today = new Date().toISOString().slice(0, 10);
-  const money = bankAccounts;
 
   if (bankAccounts.length === 0) {
     return (
       <>
         <div className="page-head">
           <span className="eyebrow">Cash &amp; Bank</span>
-          <h1>New bank voucher</h1>
+          <h1>Bank payment</h1>
         </div>
         <div className="alert">No bank account is set up in the chart of accounts.</div>
       </>
@@ -23,9 +22,10 @@ export default async function NewBankVoucher() {
     <>
       <div className="page-head">
         <span className="eyebrow">Cash &amp; Bank</span>
-        <h1>New bank voucher</h1>
+        <h1>Bank payment</h1>
         <span className="page-sub">
-          Money in and out of a bank account. Same idea as a cash voucher, against a bank rather than the till.{" "}
+          Money paid out of a bank account that isn&rsquo;t against a supplier bill — use{" "}
+          <Link href="/payables/pay" style={{ color: "var(--dr)" }}>Pay supplier</Link> for that.{" "}
           <Link href="/finance/bank-detail" style={{ color: "var(--dr)" }}>View the bank book</Link>
         </span>
       </div>
@@ -35,9 +35,10 @@ export default async function NewBankVoucher() {
         action={createBankVoucher}
         accounts={accounts as never}
         locations={locations as never}
-        moneyAccounts={money as never}
+        moneyAccounts={bankAccounts as never}
         today={today}
         nextNo="BV-"
+        presetDirection="out"
       />
     </>
   );
