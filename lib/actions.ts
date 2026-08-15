@@ -603,6 +603,8 @@ export async function createPurchaseInvoice(_prev: unknown, fd: FormData): Promi
       dueDate: str(fd, "due_date") || null,
       memo: str(fd, "memo") || null,
       reference: str(fd, "reference") || null,
+      cashOut: num(fd, "cash_out"),
+      cashAccountId: str(fd, "cash_account_id") || null,
       lines,
     };
 

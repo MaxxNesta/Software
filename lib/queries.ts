@@ -40,6 +40,55 @@ export async function getKpis(companyId: string) {
   return { stock, ar, ap, grir, cash, overdue };
 }
 
+/**
+ * Counts of open commitments, for the dashboard's "action required" summary
+ * — how many orders/receipts are still waiting on something, not the line-
+ * level detail getOpenSalesOrders/getOpenPurchaseOrders/getPendingDeliveries
+ * return for the fulfilment forms themselves.
+ */
+export async function getActionItems(companyId: string) {
+  const [so] = await sql`
+    select count(distinct o.id)::int as n
+      from document o
+      join document_line ol on ol.document_id = o.id
+      left join (
+        select dl.source_line_id, sum(dl.base_qty) as delivered_qty
+          from document_line dl join document dd on dd.id = dl.document_id
+         where dd.doc_type = 'DELIVERY' and dd.status = 'POSTED'
+         group by dl.source_line_id
+      ) d on d.source_line_id = ol.id
+     where o.company_id = ${companyId} and o.doc_type = 'SALES_ORDER' and o.status = 'POSTED'
+       and (ol.base_qty - coalesce(d.delivered_qty, 0)) > 0.0001`;
+
+  const [po] = await sql`
+    select count(distinct o.id)::int as n
+      from document o
+      join document_line ol on ol.document_id = o.id
+      left join (
+        select dl.source_line_id, sum(dl.base_qty) as received_qty
+          from document_line dl join document dd on dd.id = dl.document_id
+         where dd.doc_type = 'GOODS_RECEIPT' and dd.status = 'POSTED'
+         group by dl.source_line_id
+      ) r on r.source_line_id = ol.id
+     where o.company_id = ${companyId} and o.doc_type = 'PURCHASE_ORDER' and o.status = 'POSTED'
+       and (ol.base_qty - coalesce(r.received_qty, 0)) > 0.0001`;
+
+  const [pd] = await sql`
+    select count(*)::int as n
+      from document inv
+     where inv.company_id = ${companyId} and inv.doc_type = 'SALES_INVOICE'
+       and inv.to_deliver and inv.status = 'POSTED'
+       and not exists (
+         select 1 from document dd where dd.source_document_id = inv.id and dd.doc_type = 'DELIVERY'
+       )`;
+
+  return {
+    salesOrdersOpen: so.n as number,
+    purchaseOrdersOpen: po.n as number,
+    pendingDeliveryInvoices: pd.n as number,
+  };
+}
+
 // The invariants, run live. Every one of these should come back clean.
 export async function getHealth(companyId: string) {
   const unbalanced = await sql`

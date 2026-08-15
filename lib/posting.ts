@@ -742,9 +742,14 @@ export async function postGoodsReceipt(input: FulfillmentInput) {
  */
 async function _postPurchaseInvoice(
   tx: TransactionSql,
-  input: InvoiceInput & { goodsReceiptId?: string | null }
+  input: InvoiceInput & { goodsReceiptId?: string | null; cashOut?: number; cashAccountId?: string | null }
 ) {
   if (input.lines.length === 0) throw new Error("An invoice needs at least one line");
+
+  const cashOut = round4(input.cashOut ?? 0);
+  if (cashOut > 0 && !input.cashAccountId) {
+    throw new Error("Choose which cash or bank account the money came from");
+  }
 
   const { companyId, partnerId, locationId, docDate, dueDate } = input;
 
@@ -836,15 +841,66 @@ async function _postPurchaseInvoice(
 
   await tx`update document set journal_entry_id = ${entryId} where id = ${doc.id}`;
 
-  return { id: doc.id as string, docNo: docNo as string };
+  // Cash paid at the counter becomes a real payment document allocated to
+  // this invoice, rather than a number on the invoice header — the purchase
+  // mirror of how a sales invoice handles cash taken in.
+  let paymentNo: string | null = null;
+
+  if (cashOut > 0) {
+    if (cashOut > netTotal) {
+      throw new Error(`Cash paid (${cashOut}) is more than the invoice total (${netTotal})`);
+    }
+
+    const pmtNoRows = await tx`
+      select fn_next_document_no(${companyId}, 'SUPPLIER_PAYMENT', ${fiscalYear}::uuid) as no`;
+    paymentNo = pmtNoRows[0].no;
+
+    const [payment] = await tx`
+      insert into document
+        (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date,
+         partner_id, currency, exchange_rate, status,
+         net_total, tax_total, gross_total, memo, posted_at,
+         source_document_id, payment_type)
+      values
+        (${companyId}, 'SUPPLIER_PAYMENT', ${paymentNo}, ${fiscalYear}, ${docDate}::date,
+         ${docDate}::date, ${partnerId}, 'MMK', 1, 'POSTED',
+         ${cashOut}, 0, ${cashOut}, ${`Cash paid against ${docNo}`}, now(),
+         ${doc.id}, 'CASH')
+      returning id`;
+
+    await tx`
+      insert into payment_allocation
+        (company_id, payment_id, invoice_id, amount, base_amount)
+      values (${companyId}, ${payment.id}, ${doc.id}, ${cashOut}, ${cashOut})`;
+
+    const ap = await tx`
+      select fn_resolve_control_account(${companyId}, 'AP_CONTROL', ${partnerId}) as a`;
+
+    const paymentEntry = await writeJournal(
+      tx, companyId, docDate, "SUPPLIER_PAYMENT", payment.id,
+      `${paymentNo} against ${docNo}`,
+      [
+        { accountId: ap[0].a, amount: cashOut, partnerId },
+        { accountId: input.cashAccountId as string, amount: -cashOut },
+      ]
+    );
+
+    await tx`update document set journal_entry_id = ${paymentEntry} where id = ${payment.id}`;
+  }
+
+  return { id: doc.id as string, docNo: docNo as string, paymentNo };
 }
 
-export async function postPurchaseInvoice(input: InvoiceInput & { goodsReceiptId?: string | null }) {
+export async function postPurchaseInvoice(
+  input: InvoiceInput & { goodsReceiptId?: string | null; cashOut?: number; cashAccountId?: string | null }
+) {
   return sql.begin((tx) => _postPurchaseInvoice(tx, input));
 }
 
 /** The purchase-side mirror of postSaleWithDelivery: receive it and bill it in one step. */
-export async function postPurchaseWithReceipt(input: InvoiceInput) {
+export async function postPurchaseWithReceipt(
+  input: InvoiceInput & { cashOut?: number; cashAccountId?: string | null }
+) {
   if (input.lines.length === 0) throw new Error("An invoice needs at least one line");
 
   return sql.begin(async (tx) => {

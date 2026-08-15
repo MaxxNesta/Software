@@ -1,20 +1,54 @@
 import Link from "next/link";
 import { money, shortDate } from "@/lib/db";
-import { getCompany, getKpis, getHealth, getAging, getDocuments, getStock } from "@/lib/queries";
+import { getCompany, getKpis, getHealth, getAging, getDocuments, getStock, getActionItems } from "@/lib/queries";
 
 export default async function Dashboard() {
   const company = await getCompany();
   if (!company) return <div className="empty">No company found. Run <span className="m">npm run db:seed</span>.</div>;
 
-  const [kpis, health, aging, docs, stock] = await Promise.all([
+  const [kpis, health, aging, docs, stock, actionItems] = await Promise.all([
     getKpis(company.id),
     getHealth(company.id),
     getAging(company.id),
     getDocuments(company.id),
     getStock(company.id),
+    getActionItems(company.id),
   ]);
 
   const healthy = health.unbalanced === 0 && health.inventoryBreaks === 0 && health.trialBalance === 0;
+
+  const actions = [
+    {
+      n: actionItems.salesOrdersOpen,
+      label: `sales order${actionItems.salesOrdersOpen === 1 ? "" : "s"} waiting for delivery`,
+      href: "/documents?type=SALES_ORDER",
+      tone: "warn",
+    },
+    {
+      n: actionItems.pendingDeliveryInvoices,
+      label: `invoice${actionItems.pendingDeliveryInvoices === 1 ? "" : "s"} awaiting delivery`,
+      href: "/documents?type=SALES_INVOICE",
+      tone: "warn",
+    },
+    {
+      n: Number(kpis.overdue.n),
+      label: `invoice${Number(kpis.overdue.n) === 1 ? "" : "s"} overdue`,
+      href: "/receivables",
+      tone: "overdue",
+    },
+    {
+      n: actionItems.purchaseOrdersOpen,
+      label: `purchase order${actionItems.purchaseOrdersOpen === 1 ? "" : "s"} awaiting goods`,
+      href: "/documents?type=PURCHASE_ORDER",
+      tone: "warn",
+    },
+    {
+      n: Number(kpis.grir.n),
+      label: `receipt${Number(kpis.grir.n) === 1 ? "" : "s"} waiting for a supplier invoice`,
+      href: "/documents?type=GOODS_RECEIPT",
+      tone: "warn",
+    },
+  ].filter((a) => a.n > 0);
 
   return (
     <>
@@ -60,6 +94,43 @@ export default async function Dashboard() {
           <span className="kpi-note">{kpis.grir.n} receipt{kpis.grir.n === 1 ? "" : "s"} awaiting a supplier invoice</span>
         </div>
       </div>
+
+      <section>
+        <div className="card">
+          <div className="card-head">
+            <h2>Action required</h2>
+            {actions.length > 0 && (
+              <span className="page-sub">
+                {actions.length} thing{actions.length === 1 ? "" : "s"} waiting on you
+              </span>
+            )}
+          </div>
+          <div className="card-body">
+            {actions.length === 0 ? (
+              <p className="page-sub">Nothing needs attention right now.</p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+                {actions.map((a) => (
+                  <Link
+                    key={a.href + a.label}
+                    href={a.href}
+                    style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      padding: "0.5rem 0.75rem", borderRadius: "8px", border: "1px solid var(--line)",
+                    }}
+                  >
+                    <span style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                      <span className={`pill ${a.tone}`}>{a.n}</span>
+                      <span>{a.label}</span>
+                    </span>
+                    <span className="m" style={{ color: "var(--dr)" }}>View →</span>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
 
       <section>
         <div className="card">

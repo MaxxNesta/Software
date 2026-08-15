@@ -9,6 +9,7 @@ type Node = { id: string; code: string; segment: string; name: string; parent_id
 
 type Partner = { id: string; code: string; name: string; payment_terms_days: number };
 type Location = { id: string; code: string; name: string };
+type CashAccount = { id: string; code: string; name: string };
 
 type Line = { key: number; itemId: string; qty: string; unitPrice: string };
 
@@ -29,6 +30,7 @@ export function InvoiceForm({
   today,
   categories,
   uoms,
+  cashAccounts,
 }: {
   kind: "sales" | "purchase";
   action: (prev: unknown, fd: FormData) => Promise<ActionResult>;
@@ -38,6 +40,7 @@ export function InvoiceForm({
   today: string;
   categories: Node[];
   uoms: { id: string; code: string; name: string }[];
+  cashAccounts?: CashAccount[];
 }) {
   const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
     action as never,
@@ -51,6 +54,8 @@ export function InvoiceForm({
   const [partnerId, setPartnerId] = useState("");
   const [docDate, setDocDate] = useState(today);
   const [dueDate, setDueDate] = useState("");
+  const [cashOut, setCashOut] = useState("");
+  const [cashAccountId, setCashAccountId] = useState("");
 
   const isSales = kind === "sales";
   const byId = (id: string) => items.find((i) => i.id === id);
@@ -92,6 +97,8 @@ export function InvoiceForm({
     const item = byId(l.itemId);
     return item?.is_stocked && Number(l.qty) > Number(item.on_hand);
   });
+
+  const cashOverpaid = !isSales && Number(cashOut) > total;
 
   return (
     <form action={formAction} className="form wide">
@@ -277,13 +284,50 @@ export function InvoiceForm({
         </div>
       )}
 
+      {!isSales && (
+        <div className="card" style={{ marginTop: "0.5rem" }}>
+          <div className="card-head">
+            <h2>Paid now</h2>
+          </div>
+          <div className="card-body">
+            <div className="row">
+              <div className="field">
+                <label htmlFor="cash_out">Amount paid</label>
+                <input id="cash_out" name="cash_out" type="number" min="0" step="any"
+                  value={cashOut} onChange={(e) => setCashOut(e.target.value)}
+                  placeholder="0" />
+                <span className="hint">Leave blank for a fully credit purchase</span>
+              </div>
+
+              <div className="field">
+                <label htmlFor="cash_account_id">Paid from</label>
+                <select id="cash_account_id" name="cash_account_id" value={cashAccountId}
+                  onChange={(e) => setCashAccountId(e.target.value)}
+                  disabled={!Number(cashOut)}>
+                  <option value="">Choose…</option>
+                  {(cashAccounts ?? []).map((a) => (
+                    <option key={a.id} value={a.id}>{a.code} · {a.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            {cashOverpaid && (
+              <div className="alert" style={{ marginTop: "0.5rem" }}>
+                Amount paid can&rsquo;t be more than the invoice total ({fmt(total)} MMK).
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="field">
         <label htmlFor="memo">Note</label>
         <input id="memo" name="memo" type="text" placeholder="Optional — English or Myanmar" />
       </div>
 
       <div className="actions">
-        <button type="submit" disabled={pending || total === 0 || shortages.length > 0}>
+        <button type="submit"
+          disabled={pending || total === 0 || shortages.length > 0 || cashOverpaid || (Number(cashOut) > 0 && !cashAccountId)}>
           {pending ? "Posting…" : `Post ${isSales ? "sales" : "purchase"} invoice`}
         </button>
         <span className="page-sub">

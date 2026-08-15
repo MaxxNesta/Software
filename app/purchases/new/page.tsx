@@ -4,7 +4,7 @@ import { sql } from "@/lib/db";
 import { InvoiceForm } from "@/components/invoice-form";
 
 export default async function NewPurchaseInvoice() {
-  const { suppliers, items, locations, uoms } = await getFormData();
+  const { suppliers, items, locations, uoms, cashAccounts } = await getFormData();
   const [co] = await sql`select id from company order by created_at limit 1`;
   const categories = await allCategories(co.id);
   const today = new Date().toISOString().slice(0, 10);
@@ -51,6 +51,7 @@ export default async function NewPurchaseInvoice() {
         categories={categories}
         uoms={uoms as never}
         today={today}
+        cashAccounts={cashAccounts as never}
       />
     </>
   );
