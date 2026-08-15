@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { money } from "@/lib/db";
 import { getCompany, getPartners } from "@/lib/queries";
+import { DataTable } from "@/components/data-table";
 
 export default async function Partners() {
   const company = await getCompany();
@@ -28,35 +29,47 @@ export default async function Partners() {
               <Link href="/partners/new" className="btn">New partner</Link>
             </span>
           </div>
-          <div className="tablewrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Code</th><th>Name</th><th>Role</th><th>Township</th>
-                  <th className="r">Terms</th><th className="r">Outstanding</th>
-                </tr>
-              </thead>
-              <tbody>
-                {partners.map((p: any) => (
-                  <tr key={p.id}>
-                    <td className="code">{p.code}</td>
-                    <td className="wrap">
-                      {p.name}
-                      {p.name_my && <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{p.name_my}</div>}
-                    </td>
-                    <td>
-                      {p.is_customer && <span className="pill ok">Customer</span>}
-                      {p.is_customer && p.is_supplier && " "}
-                      {p.is_supplier && <span className="pill warn">Supplier</span>}
-                    </td>
-                    <td>{p.township ?? "—"}</td>
-                    <td className="r">{p.payment_terms_days}d</td>
-                    <td className="r">{Number(p.outstanding) ? money(p.outstanding) : "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            rows={partners as any[]}
+            rowKey={(p) => p.id}
+            emptyLabel="No partners yet"
+            searchPlaceholder="Search partners…"
+            defaultSort={{ key: "code", dir: "asc" }}
+            columns={[
+              { key: "code", label: "Code", sortable: true },
+              { key: "name", label: "Name", sortable: true },
+              { key: "role", label: "Role", sortable: true },
+              { key: "township", label: "Township", sortable: true },
+              { key: "payment_terms_days", label: "Terms", sortable: true, align: "r" },
+              { key: "outstanding", label: "Outstanding", sortable: true, align: "r" },
+            ]}
+            getSearchText={(p) => [p.code, p.name, p.name_my, p.township].filter(Boolean).join(" ")}
+            getSortValue={(p, key) => {
+              switch (key) {
+                case "role": return `${p.is_customer ? "Customer" : ""} ${p.is_supplier ? "Supplier" : ""}`.trim();
+                case "payment_terms_days": return Number(p.payment_terms_days);
+                case "outstanding": return Number(p.outstanding);
+                default: return (p as any)[key] ?? "";
+              }
+            }}
+            renderRow={(p: any) => (
+              <tr>
+                <td className="code">{p.code}</td>
+                <td className="wrap">
+                  {p.name}
+                  {p.name_my && <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{p.name_my}</div>}
+                </td>
+                <td>
+                  {p.is_customer && <span className="pill ok">Customer</span>}
+                  {p.is_customer && p.is_supplier && " "}
+                  {p.is_supplier && <span className="pill warn">Supplier</span>}
+                </td>
+                <td>{p.township ?? "—"}</td>
+                <td className="r">{p.payment_terms_days}d</td>
+                <td className="r">{Number(p.outstanding) ? money(p.outstanding) : "—"}</td>
+              </tr>
+            )}
+          />
         </div>
       </section>
     </>

@@ -3,6 +3,7 @@ import { sql } from "@/lib/db";
 import { createCategory } from "@/lib/actions";
 import { allCategories, childrenOf, levelCounts, branchIds } from "@/lib/tree";
 import { AddCategoryForm } from "@/components/level-form";
+import { DataTable } from "@/components/data-table";
 
 export default async function CategoriesRoot() {
   const [co] = await sql`select id from company order by created_at limit 1`;
@@ -10,7 +11,11 @@ export default async function CategoriesRoot() {
 
   const nodes = await allCategories(co.id);
   const counts = await levelCounts(co.id);
-  const roots = childrenOf(nodes, null);
+  const roots = childrenOf(nodes, null).map((g) => ({
+    ...g,
+    inside: counts.childrenOf(g.id),
+    total: branchIds(nodes, g.id).reduce((s, id) => s + counts.itemsIn(id), 0),
+  }));
 
   return (
     <>
@@ -45,42 +50,42 @@ export default async function CategoriesRoot() {
               use, like Food &amp; Drink or Household.
             </div>
           ) : (
-            <div className="tablewrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Code</th><th>Name</th>
-                    <th className="r">Inside</th><th className="r">Items</th><th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {roots.map((g) => {
-                    const total = branchIds(nodes, g.id)
-                      .reduce((s, id) => s + counts.itemsIn(id), 0);
-                    return (
-                      <tr key={g.id} className="link">
-                        <td className="code">
-                          <Link href={`/items/categories/${g.id}`} style={{ color: "var(--dr)" }}>
-                            {g.code}
-                          </Link>
-                        </td>
-                        <td className="wrap">
-                          <Link href={`/items/categories/${g.id}`}>{g.name}</Link>
-                          {g.name_my && (
-                            <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{g.name_my}</div>
-                          )}
-                        </td>
-                        <td className="r">{counts.childrenOf(g.id) || ""}</td>
-                        <td className="r">{total || ""}</td>
-                        <td>
-                          <Link href={`/items/categories/${g.id}`} className="btn ghost tiny">Open &rarr;</Link>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              rows={roots}
+              rowKey={(g) => g.id}
+              emptyLabel="No categories"
+              searchPlaceholder="Search categories…"
+              defaultSort={{ key: "code", dir: "asc" }}
+              columns={[
+                { key: "code", label: "Code", sortable: true },
+                { key: "name", label: "Name", sortable: true },
+                { key: "inside", label: "Inside", sortable: true, align: "r" },
+                { key: "total", label: "Items", sortable: true, align: "r" },
+                { key: "actions", label: "" },
+              ]}
+              getSearchText={(g) => [g.code, g.name, g.name_my].filter(Boolean).join(" ")}
+              getSortValue={(g, key) => (key === "inside" || key === "total" ? Number((g as any)[key]) : (g as any)[key] ?? "")}
+              renderRow={(g) => (
+                <tr className="link">
+                  <td className="code">
+                    <Link href={`/items/categories/${g.id}`} style={{ color: "var(--dr)" }}>
+                      {g.code}
+                    </Link>
+                  </td>
+                  <td className="wrap">
+                    <Link href={`/items/categories/${g.id}`}>{g.name}</Link>
+                    {g.name_my && (
+                      <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{g.name_my}</div>
+                    )}
+                  </td>
+                  <td className="r">{g.inside || ""}</td>
+                  <td className="r">{g.total || ""}</td>
+                  <td>
+                    <Link href={`/items/categories/${g.id}`} className="btn ghost tiny">Open &rarr;</Link>
+                  </td>
+                </tr>
+              )}
+            />
           )}
         </div>
       </section>

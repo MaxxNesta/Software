@@ -2,6 +2,7 @@ import Link from "next/link";
 import { money, qty, shortDate } from "@/lib/db";
 import { getCompany, getItems, getStockMovements } from "@/lib/queries";
 import { AccountPicker } from "@/components/account-picker";
+import { DataTable } from "@/components/data-table";
 
 const label = (t: string) => t.replace(/_/g, " ").toLowerCase();
 
@@ -65,39 +66,49 @@ export default async function StockMovements({
               {withBalance.length === 0 ? (
                 <div className="empty">Nothing has moved on this item yet.</div>
               ) : (
-                <div className="tablewrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Date</th><th>Document</th><th>Location</th><th>Batch</th>
-                        <th className="r">In</th><th className="r">Out</th>
-                        <th className="r">Unit cost</th><th className="r">Balance</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {withBalance.map((r) => (
-                        <tr key={r.id}>
-                          <td className="code">{shortDate(r.movement_date)}</td>
-                          <td className="code">
-                            {r.document_id ? (
-                              <Link href={`/documents/${r.document_id}`} style={{ color: "var(--dr)" }}>
-                                {r.doc_no ?? label(r.doc_type)}
-                              </Link>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-                          <td className="code">{r.location_code}</td>
-                          <td className="code">{r.batch_no ?? "—"}</td>
-                          <td className="r">{Number(r.qty) > 0 ? qty(r.qty) : ""}</td>
-                          <td className="r">{Number(r.qty) < 0 ? qty(String(-Number(r.qty))) : ""}</td>
-                          <td className="r">{money(r.unit_cost)}</td>
-                          <td className="r">{qty(String(r.balance))}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                // Search only, deliberately no sort — Balance is a running
+                // total tied to chronological order, and reordering the rows
+                // would make it read as wrong even though each value is
+                // still historically accurate.
+                <DataTable
+                  rows={withBalance}
+                  rowKey={(r) => r.id}
+                  emptyLabel="No matches"
+                  searchPlaceholder="Search movements…"
+                  columns={[
+                    { key: "date", label: "Date" },
+                    { key: "document", label: "Document" },
+                    { key: "location", label: "Location" },
+                    { key: "batch", label: "Batch" },
+                    { key: "in", label: "In", align: "r" },
+                    { key: "out", label: "Out", align: "r" },
+                    { key: "cost", label: "Unit cost", align: "r" },
+                    { key: "balance", label: "Balance", align: "r" },
+                  ]}
+                  getSearchText={(r) =>
+                    [r.doc_no, r.doc_type, r.location_code, r.batch_no].filter(Boolean).join(" ")
+                  }
+                  renderRow={(r) => (
+                    <tr>
+                      <td className="code">{shortDate(r.movement_date)}</td>
+                      <td className="code">
+                        {r.document_id ? (
+                          <Link href={`/documents/${r.document_id}`} style={{ color: "var(--dr)" }}>
+                            {r.doc_no ?? label(r.doc_type)}
+                          </Link>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="code">{r.location_code}</td>
+                      <td className="code">{r.batch_no ?? "—"}</td>
+                      <td className="r">{Number(r.qty) > 0 ? qty(r.qty) : ""}</td>
+                      <td className="r">{Number(r.qty) < 0 ? qty(String(-Number(r.qty))) : ""}</td>
+                      <td className="r">{money(r.unit_cost)}</td>
+                      <td className="r">{qty(String(r.balance))}</td>
+                    </tr>
+                  )}
+                />
               )}
             </div>
           </section>
