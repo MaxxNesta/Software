@@ -9,9 +9,11 @@ type Node = { id: string; code: string; segment: string; name: string; parent_id
 type Partner = { id: string; code: string; name: string };
 type Location = { id: string; code: string; name: string };
 type Line = { key: number; itemId: string; qty: string; unitPrice: string };
-type SalesDoc = { id: string; doc_type: string; doc_no: string; doc_date: string; partner_id: string };
+type SalesDoc = { id: string; doc_type: string; doc_no: string; doc_date: Date | string; partner_id: string };
 
 const fmt = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
+// postgres.js sends `date` columns over as Date objects, not strings.
+const fmtDate = (d: Date | string) => (typeof d === "string" ? d : d.toISOString()).slice(0, 10);
 
 /**
  * The inverse of an invoice, in every sense that matters for the UI: a
@@ -133,7 +135,7 @@ export function ReturnForm({
                   </option>
                   {returnableDocs.map((d) => (
                     <option key={d.id} value={d.id}>
-                      {d.doc_no} · {d.doc_type === "DELIVERY" ? "delivery" : "invoice"} · {d.doc_date.slice(0, 10)}
+                      {d.doc_no} · {d.doc_type === "DELIVERY" ? "delivery" : "invoice"} · {fmtDate(d.doc_date)}
                     </option>
                   ))}
                 </select>
