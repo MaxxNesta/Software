@@ -55,9 +55,9 @@ export default async function Dashboard() {
           <span className="kpi-note">{kpis.overdue.n} invoice{kpis.overdue.n === 1 ? "" : "s"} past due</span>
         </div>
         <div className="kpi">
-          <span className="kpi-label">Goods not invoiced</span>
+          <span className="kpi-label">Goods received, not invoiced</span>
           <span className="kpi-value">{money(Math.abs(Number(kpis.grir.total)))}</span>
-          <span className="kpi-note">{kpis.grir.n} supplier bill{kpis.grir.n === 1 ? "" : "s"} outstanding</span>
+          <span className="kpi-note">{kpis.grir.n} receipt{kpis.grir.n === 1 ? "" : "s"} awaiting a supplier invoice</span>
         </div>
       </div>
 

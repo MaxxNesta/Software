@@ -32,15 +32,24 @@ export default async function Receive() {
         <span className="eyebrow">Purchases</span>
         <h1>Goods receipts</h1>
         <span className="page-sub">
-          Where stock actually arrives. Fulfil an open purchase order — the
-          bill can come before or after, GR/IR clearing holds the gap either way.
+          Record goods as they physically arrive, against an open purchase
+          order. The supplier&rsquo;s invoice can come before or after — it
+          doesn&rsquo;t have to line up with the day the goods show up.
         </span>
+      </div>
+
+      <div className="actions" style={{ marginBottom: "1.5rem" }}>
+        <Link href="/purchases/receive/new" className="btn ghost">+ Receive goods (no PO)</Link>
       </div>
 
       {orders.size === 0 ? (
         <div className="empty">
-          Nothing outstanding.{" "}
+          No open purchase order to receive against.{" "}
           <Link href="/purchases/orders/new" style={{ color: "var(--dr)" }}>New purchase order</Link>
+          {" "}to start one. If the goods have already arrived with no order
+          behind them, use{" "}
+          <Link href="/purchases/receive/new" style={{ color: "var(--dr)" }}>Receive goods</Link>
+          {" "}above instead.
         </div>
       ) : (
         [...orders.values()].map((o) => (
