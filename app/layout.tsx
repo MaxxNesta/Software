@@ -1,9 +1,15 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
 import Link from "next/link";
 import { getCompany } from "@/lib/queries";
 import { NavLink, NavGroup } from "./nav";
 import { Toast } from "@/components/toast";
+import {
+  LayoutDashboard, ShoppingCart, Package, Wallet, BookOpen, Boxes, Database, Settings as SettingsIcon,
+} from "lucide-react";
+
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
 
 export const metadata: Metadata = {
   title: "Myanmar ERP",
@@ -23,7 +29,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   }
 
   return (
-    <html lang="en">
+    <html lang="en" className={inter.variable}>
       <body>
         <div className="shell">
           <nav className="sidebar">
@@ -32,12 +38,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <span className="brand-sub">{company?.base_currency ?? "not set up"}</span>
             </div>
 
-            <NavGroup label="Overview" match={["/"]}>
+            <NavGroup label="Overview" icon={<LayoutDashboard size={14} />} match={["/"]}>
               <NavLink href="/">Dashboard</NavLink>
               <NavLink href="/documents">All documents</NavLink>
             </NavGroup>
 
-            <NavGroup label="Sales" match={["/sales", "/receivables"]}>
+            <NavGroup label="Sales" icon={<ShoppingCart size={14} />} match={["/sales", "/receivables"]}>
               <NavLink href="/sales/orders/new">New sales order</NavLink>
               <NavLink href="/sales/new">New sales invoice</NavLink>
               <NavLink href="/sales/deliver">Deliveries</NavLink>
@@ -46,7 +52,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <NavLink href="/receivables" exact>Receivables</NavLink>
             </NavGroup>
 
-            <NavGroup label="Purchases" match={["/purchases", "/payables"]}>
+            <NavGroup label="Purchases" icon={<Package size={14} />} match={["/purchases", "/payables"]}>
               <NavLink href="/purchases/orders/new">New purchase order</NavLink>
               <NavLink href="/purchases/new">New purchase invoice</NavLink>
               <NavLink href="/purchases/receive">Goods receipts</NavLink>
@@ -55,7 +61,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <NavLink href="/payables" exact>Payables</NavLink>
             </NavGroup>
 
-            <NavGroup label="Cash &amp; Bank" match={[
+            <NavGroup label="Cash &amp; Bank" icon={<Wallet size={14} />} match={[
               "/finance/cash-detail", "/finance/bank-detail",
               "/finance/cash-receipt", "/finance/cash-payment",
               "/finance/bank-receipt", "/finance/bank-payment",
@@ -70,7 +76,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <NavLink href="/finance/transfer">Interbranch transfer</NavLink>
             </NavGroup>
 
-            <NavGroup label="Accounting" match={[
+            <NavGroup label="Accounting" icon={<BookOpen size={14} />} match={[
               "/finance/journal", "/finance/opening", "/finance/general-ledger", "/ledger",
               "/finance/income-statement", "/finance/balance-sheet", "/finance/cash-flow",
             ]}>
@@ -83,14 +89,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <NavLink href="/finance/cash-flow">Cash flow</NavLink>
             </NavGroup>
 
-            <NavGroup label="Inventory" match={["/items/stock", "/inventory", "/warehouses"]}>
+            <NavGroup label="Inventory" icon={<Boxes size={14} />} match={["/items/stock", "/inventory", "/warehouses"]}>
               <NavLink href="/items/stock">Stock overview</NavLink>
               <NavLink href="/inventory/movements">Stock movements</NavLink>
               <NavLink href="/inventory/adjustments">Adjustments</NavLink>
               <NavLink href="/warehouses">Warehouses</NavLink>
             </NavGroup>
 
-            <NavGroup label="Master data" match={["/items/categories", "/items/subcategories", "/items", "/partners", "/salespersons"]}>
+            <NavGroup label="Master data" icon={<Database size={14} />} match={["/items/categories", "/items/subcategories", "/items", "/partners", "/salespersons"]}>
               <NavLink href="/items/categories">Categories</NavLink>
               <NavLink href="/items/subcategories">Sub category</NavLink>
               <NavLink href="/items" exact>Items</NavLink>
@@ -98,7 +104,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <NavLink href="/salespersons">Salespersons</NavLink>
             </NavGroup>
 
-            <NavGroup label="Settings" match={["/settings"]}>
+            <NavGroup label="Settings" icon={<SettingsIcon size={14} />} match={["/settings"]}>
               <NavLink href="/settings/accounts">Chart of accounts</NavLink>
             </NavGroup>
 

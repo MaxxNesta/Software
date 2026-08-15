@@ -6,17 +6,22 @@
   --muted:     #6B7686;
   --line:      #DCE1E7;
   --line-soft: #EAEEF2;
-  --dr:        #2D5BD1;
+  --dr:        #5E6AD2;
   --cr:        #A8571F;
   --ok:        #1F7A4D;
   --warn:      #B4691A;
   --bad:       #B4283C;
   --ghost:     #9AA4B2;
 
-  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --sans: var(--font-inter), system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "Cascadia Mono", "SF Mono", "Segoe UI Mono", "Roboto Mono", Menlo, Consolas, monospace;
 
   --s1: 0.35rem; --s2: 0.65rem; --s3: 1rem; --s4: 1.5rem; --s5: 2.25rem; --s6: 3.25rem;
+
+  /* Small elements (pills, tiny buttons) stay crisp; containers (cards,
+     toast, dropdowns) get more rounding — that contrast is what reads as
+     "considered" rather than "every corner is the same radius." */
+  --r-sm: 4px; --r-md: 6px; --r-lg: 10px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -28,7 +33,7 @@
     --muted:     #8B95A5;
     --line:      #2A313B;
     --line-soft: #212831;
-    --dr:        #7BA0F0;
+    --dr:        #8D93F5;
     --cr:        #E09C55;
     --ok:        #4FB784;
     --warn:      #DDA24E;
@@ -131,7 +136,7 @@ section { display: flex; flex-direction: column; gap: var(--s3); }
 .kpi {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 3px;
+  border-radius: var(--r-lg);
   padding: var(--s3);
   display: flex; flex-direction: column; gap: var(--s1);
 }
@@ -143,7 +148,7 @@ section { display: flex; flex-direction: column; gap: var(--s3); }
 
 /* ---------------------------------------------------------------- cards -- */
 
-.card { background: var(--surface); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; }
 .card-head {
   padding: var(--s3);
   border-bottom: 1px solid var(--line-soft);
@@ -175,14 +180,15 @@ tfoot td { font-weight: 600; border-top: 1px solid var(--line); font-variant-num
 
 .pill {
   display: inline-block; font-family: var(--mono); font-size: 0.68rem;
-  letter-spacing: 0.06em; padding: 0.1rem 0.42rem; border-radius: 2px;
-  border: 1px solid var(--line); color: var(--muted); text-transform: uppercase;
+  letter-spacing: 0.06em; padding: 0.14rem 0.48rem; border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--muted) 13%, transparent);
+  color: var(--muted); text-transform: uppercase; border: none;
 }
-.pill.posted  { border-color: color-mix(in srgb, var(--ok) 40%, transparent);   color: var(--ok); }
-.pill.draft   { border-color: var(--line); color: var(--muted); }
-.pill.overdue { border-color: color-mix(in srgb, var(--bad) 40%, transparent);  color: var(--bad); }
-.pill.warn    { border-color: color-mix(in srgb, var(--warn) 40%, transparent); color: var(--warn); }
-.pill.ok      { border-color: color-mix(in srgb, var(--ok) 40%, transparent);   color: var(--ok); }
+.pill.posted  { background: color-mix(in srgb, var(--ok) 15%, transparent);   color: var(--ok); }
+.pill.draft   { background: color-mix(in srgb, var(--muted) 13%, transparent); color: var(--muted); }
+.pill.overdue { background: color-mix(in srgb, var(--bad) 15%, transparent);  color: var(--bad); }
+.pill.warn    { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+.pill.ok      { background: color-mix(in srgb, var(--ok) 15%, transparent);   color: var(--ok); }
 
 .dr { color: var(--dr); }
 .cr { color: var(--cr); }
@@ -198,8 +204,8 @@ tfoot td { font-weight: 600; border-top: 1px solid var(--line); font-variant-num
 /* ---------------------------------------------------------------- flow --- */
 
 .flow { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); font-family: var(--mono); font-size: 0.78rem; }
-.flow-node { padding: 0.16rem 0.5rem; border: 1px solid var(--line); border-radius: 2px; }
-.flow-node.here { border-color: var(--dr); color: var(--dr); }
+.flow-node { padding: 0.16rem 0.5rem; border: 1px solid var(--line); border-radius: var(--r-sm); }
+.flow-node.here { border-color: var(--dr); color: var(--dr); background: color-mix(in srgb, var(--dr) 10%, transparent); }
 .flow-arrow { color: var(--muted); }
 
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--s3); align-items: start; }
@@ -222,13 +228,13 @@ tfoot td { font-weight: 600; border-top: 1px solid var(--line); font-variant-num
 }
 .field .hint { font-size: 0.78rem; color: var(--muted); }
 
-input[type="text"], input[type="number"], input[type="date"], select, textarea {
+input[type="text"], input[type="number"], input[type="date"], input[type="time"], select, textarea {
   font-family: inherit;
   font-size: 0.9rem;
   color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 3px;
+  border-radius: var(--r-md);
   padding: 0.46rem 0.6rem;
   width: 100%;
   transition: border-color 150ms;
@@ -248,7 +254,7 @@ input[type="number"] { font-family: var(--mono); font-variant-numeric: tabular-n
 button {
   font-family: inherit; font-size: 0.88rem; font-weight: 500;
   color: var(--surface); background: var(--dr);
-  border: 1px solid var(--dr); border-radius: 3px;
+  border: 1px solid var(--dr); border-radius: var(--r-md);
   padding: 0.46rem 1rem; cursor: pointer;
   transition: opacity 150ms;
 }
@@ -266,7 +272,7 @@ button.tiny { padding: 0.16rem 0.5rem; font-size: 0.78rem; }
   border: 1px solid color-mix(in srgb, var(--bad) 45%, transparent);
   background: color-mix(in srgb, var(--bad) 8%, transparent);
   color: var(--bad);
-  border-radius: 3px; padding: var(--s2) var(--s3); font-size: 0.87rem;
+  border-radius: var(--r-md); padding: var(--s2) var(--s3); font-size: 0.87rem;
 }
 
 /* ------------------------------------------------------------- toast --- */
@@ -283,7 +289,7 @@ button.tiny { padding: 0.16rem 0.5rem; font-size: 0.78rem; }
   display: flex; align-items: center; gap: 0.6rem;
   background: var(--surface);
   border: 1px solid color-mix(in srgb, var(--ok) 40%, var(--line));
-  border-radius: 6px; padding: 0.8rem 1.15rem;
+  border-radius: var(--r-lg); padding: 0.8rem 1.15rem;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2), 0 3px 10px rgba(0, 0, 0, 0.1);
   font-size: 0.95rem; font-weight: 500; color: var(--ink);
   white-space: nowrap;
@@ -331,7 +337,7 @@ button.tiny { padding: 0.16rem 0.5rem; font-size: 0.78rem; }
 .readout {
   font-family: var(--mono); font-size: 0.85rem;
   padding: 0.46rem 0.6rem; border: 1px solid var(--line);
-  border-radius: 3px; background: var(--ground);
+  border-radius: var(--r-md); background: var(--ground);
 }
 
 /* ------------------------------------------------------------- picker --- */
@@ -341,7 +347,7 @@ button.tiny { padding: 0.16rem 0.5rem; font-size: 0.78rem; }
   min-width: 340px; max-width: 460px;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 3px;
+  border-radius: var(--r-lg);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   max-height: 340px; overflow-y: auto;
 }
@@ -380,6 +386,9 @@ button.tiny { padding: 0.16rem 0.5rem; font-size: 0.78rem; }
 .navhead:hover { color: var(--ink); opacity: 1; }
 .navhead[data-inside="true"] { color: var(--ink); }
 
+.navhead-label { display: flex; align-items: center; gap: 0.5rem; }
+.navicon { display: inline-flex; flex: none; }
+
 .navcaret { transition: transform 150ms; display: inline-block; font-size: 0.9rem; }
 .navcaret[data-open="true"] { transform: rotate(90deg); }
 
@@ -398,7 +407,7 @@ a.btn {
   display: inline-block;
   font-family: inherit; font-size: 0.88rem; font-weight: 500;
   color: var(--surface); background: var(--dr);
-  border: 1px solid var(--dr); border-radius: 3px;
+  border: 1px solid var(--dr); border-radius: var(--r-md);
   padding: 0.46rem 1rem; cursor: pointer;
   transition: opacity 150ms;
   text-decoration: none;

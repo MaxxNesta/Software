@@ -30,11 +30,14 @@ export function NavLink({
  */
 export function NavGroup({
   label,
+  icon,
   match,
   children,
   defaultOpen,
 }: {
   label: string;
+  /** A small section icon — lucide components work as-is (currentColor stroke). */
+  icon?: React.ReactNode;
   /** Path prefixes that belong to this group. */
   match: string[];
   children: React.ReactNode;
@@ -55,7 +58,10 @@ export function NavGroup({
         aria-expanded={isOpen}
         data-inside={contains}
       >
-        <span>{label}</span>
+        <span className="navhead-label">
+          {icon && <span className="navicon">{icon}</span>}
+          {label}
+        </span>
         <span className="navcaret" data-open={isOpen}>›</span>
       </button>
       {isOpen && <div className="navitems">{children}</div>}

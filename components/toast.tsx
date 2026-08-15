@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Check } from "lucide-react";
 
 const SHOW_MS = 2600;
 const FADE_MS = 320;
@@ -58,7 +59,7 @@ function ToastInner() {
         aria-live="polite"
         onClick={() => setToast(null)}
       >
-        <span className="toast-icon" aria-hidden="true">✓</span>
+        <span className="toast-icon" aria-hidden="true"><Check size={13} strokeWidth={3} /></span>
         <span>{toast.text}</span>
       </div>
     </div>
