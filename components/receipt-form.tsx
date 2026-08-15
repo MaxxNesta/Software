@@ -55,7 +55,7 @@ export function ReceiptForm({
 
   function pickItem(key: number, itemId: string) {
     const item = byId(itemId);
-    const cost = item ? Number(item.avg_cost) : 0;
+    const cost = item ? Number(item.next_cost) : 0;
     setLine(key, { itemId, unitCost: cost > 0 ? String(cost) : "" });
   }
 

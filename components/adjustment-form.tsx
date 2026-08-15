@@ -6,36 +6,25 @@ import { ItemPicker } from "./item-picker";
 
 type Item = PickerItem;
 type Node = { id: string; code: string; segment: string; name: string; parent_id: string | null };
-type Partner = { id: string; code: string; name: string; payment_terms_days: number };
 type Location = { id: string; code: string; name: string };
-type Line = { key: number; itemId: string; qty: string; unitPrice: string };
+type Line = { key: number; itemId: string; qty: string; unitCost: string };
 
 const fmt = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 
-function addDays(iso: string, days: number) {
-  const d = new Date(iso);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
 /**
- * A commitment, not a posting: no stock check, no cost column, nothing to
- * balance. Orders exist to be fulfilled later, so this is just "what, how
- * much, roughly what price" for the record.
+ * A correction, not a transaction — damage, shrinkage, or a physical count
+ * that disagrees with the ledger. Positive quantity is stock found;
+ * negative is stock lost. No partner, because nobody sold or supplied this.
  */
-export function OrderForm({
-  kind,
+export function AdjustmentForm({
   action,
-  partners,
   items: initialItems,
   locations,
   today,
   categories,
   uoms,
 }: {
-  kind: "sales" | "purchase";
   action: (prev: unknown, fd: FormData) => Promise<ActionResult>;
-  partners: Partner[];
   items: Item[];
   locations: Location[];
   today: string;
@@ -50,12 +39,9 @@ export function OrderForm({
   const [items, setItems] = useState<Item[]>(initialItems);
   const addItem = (i: Item) => setItems((xs) => [...xs, i]);
 
-  const [lines, setLines] = useState<Line[]>([{ key: 1, itemId: "", qty: "", unitPrice: "" }]);
-  const [partnerId, setPartnerId] = useState("");
+  const [lines, setLines] = useState<Line[]>([{ key: 1, itemId: "", qty: "", unitCost: "" }]);
   const [docDate, setDocDate] = useState(today);
-  const [dueDate, setDueDate] = useState("");
 
-  const isSales = kind === "sales";
   const byId = (id: string) => items.find((i) => i.id === id);
 
   function setLine(key: number, patch: Partial<Line>) {
@@ -64,30 +50,40 @@ export function OrderForm({
 
   function pickItem(key: number, itemId: string) {
     const item = byId(itemId);
-    const price = !item ? "" : isSales ? item.sale_price : item.next_cost;
-    setLine(key, { itemId, unitPrice: Number(price) > 0 ? String(Number(price)) : "" });
-  }
-
-  function pickPartner(id: string) {
-    setPartnerId(id);
-    const p = partners.find((x) => x.id === id);
-    if (p && p.payment_terms_days > 0) setDueDate(addDays(docDate, p.payment_terms_days));
+    const cost = item ? Number(item.next_cost) : 0;
+    setLine(key, { itemId, unitCost: cost > 0 ? String(cost) : "" });
   }
 
   const addLine = () =>
-    setLines((ls) => [...ls, { key: Math.max(0, ...ls.map((l) => l.key)) + 1, itemId: "", qty: "", unitPrice: "" }]);
+    setLines((ls) => [...ls, { key: Math.max(0, ...ls.map((l) => l.key)) + 1, itemId: "", qty: "", unitCost: "" }]);
 
   const removeLine = (key: number) =>
     setLines((ls) => (ls.length === 1 ? ls : ls.filter((l) => l.key !== key)));
 
-  const amount = (l: Line) => (Number(l.qty) || 0) * (Number(l.unitPrice) || 0);
+  const isLoss = (l: Line) => Number(l.qty) < 0;
+  const effectiveCost = (l: Line) => {
+    if (isLoss(l)) return Number(byId(l.itemId)?.next_cost ?? 0);
+    return Number(l.unitCost) || 0;
+  };
+  const amount = (l: Line) => (Number(l.qty) || 0) * effectiveCost(l);
   const total = lines.reduce((s, l) => s + amount(l), 0);
 
   const payload = JSON.stringify(
     lines
-      .filter((l) => l.itemId && Number(l.qty) > 0)
-      .map((l) => ({ itemId: l.itemId, qty: Number(l.qty), unitPrice: Number(l.unitPrice) || 0 }))
+      .filter((l) => l.itemId && Number(l.qty) !== 0)
+      .map((l) => ({
+        itemId: l.itemId,
+        qty: Number(l.qty),
+        unitCost: !isLoss(l) && l.unitCost !== "" ? Number(l.unitCost) : "",
+      }))
   );
+
+  // A loss can't take more than what's on hand.
+  const shortages = lines.filter((l) => {
+    if (!l.itemId || !isLoss(l)) return false;
+    const item = byId(l.itemId);
+    return item?.is_stocked && -Number(l.qty) > Number(item.on_hand);
+  });
 
   return (
     <form action={formAction} className="form wide">
@@ -97,21 +93,10 @@ export function OrderForm({
 
       <div className="card">
         <div className="card-head">
-          <h2>{isSales ? "Customer" : "Supplier"} and dates</h2>
+          <h2>Warehouse and date</h2>
         </div>
         <div className="card-body">
           <div className="row">
-            <div className="field">
-              <label htmlFor="partner_id">{isSales ? "Customer" : "Supplier"}</label>
-              <select id="partner_id" name="partner_id" value={partnerId}
-                onChange={(e) => pickPartner(e.target.value)} required>
-                <option value="">Choose…</option>
-                {partners.map((p) => (
-                  <option key={p.id} value={p.id}>{p.code} · {p.name}</option>
-                ))}
-              </select>
-            </div>
-
             <div className="field">
               <label htmlFor="location_id">Warehouse</label>
               <select id="location_id" name="location_id" defaultValue={locations[0]?.id ?? ""} required>
@@ -122,16 +107,14 @@ export function OrderForm({
             </div>
 
             <div className="field">
-              <label htmlFor="doc_date">Order date</label>
+              <label htmlFor="doc_date">Date</label>
               <input id="doc_date" name="doc_date" type="date" value={docDate}
                 onChange={(e) => setDocDate(e.target.value)} required />
             </div>
 
             <div className="field">
-              <label htmlFor="due_date">Needed by</label>
-              <input id="due_date" name="due_date" type="date" value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)} />
-              <span className="hint">Optional</span>
+              <label htmlFor="reference">Reference</label>
+              <input id="reference" name="reference" type="text" placeholder="Count sheet, incident no." />
             </div>
           </div>
         </div>
@@ -147,18 +130,21 @@ export function OrderForm({
           <table className="linetable">
             <thead>
               <tr>
-                <th>Item</th><th className="r">Qty</th><th className="r">Expected price</th>
-                <th className="r">Amount</th><th />
+                <th>Item</th><th className="r">On hand</th>
+                <th className="r">Qty (+ found / − lost)</th><th className="r">Unit cost</th>
+                <th className="r">Value</th><th />
               </tr>
             </thead>
             <tbody>
               {lines.map((l) => {
                 const item = byId(l.itemId);
+                const loss = isLoss(l);
+                const short = loss && item?.is_stocked && -Number(l.qty) > Number(item.on_hand);
                 return (
                   <tr key={l.key}>
                     <td style={{ minWidth: 240 }}>
                       <ItemPicker
-                        mode={kind}
+                        mode="purchase"
                         items={items}
                         categories={categories}
                         uoms={uoms}
@@ -167,15 +153,24 @@ export function OrderForm({
                         onCreated={addItem}
                       />
                     </td>
+                    <td className="r" style={{ color: short ? "var(--bad)" : undefined }}>
+                      {item ? fmt(Number(item.on_hand)) : "—"}
+                    </td>
                     <td className="narrow">
-                      <input type="number" min="0" step="any" value={l.qty}
+                      <input type="number" step="any" value={l.qty}
                         onChange={(e) => setLine(l.key, { qty: e.target.value })}
                         aria-label="Quantity" />
                     </td>
                     <td className="narrow">
-                      <input type="number" min="0" step="any" value={l.unitPrice}
-                        onChange={(e) => setLine(l.key, { unitPrice: e.target.value })}
-                        aria-label="Expected price" />
+                      {loss ? (
+                        <span className="m" style={{ color: "var(--muted)" }}>
+                          {fmt(effectiveCost(l))}
+                        </span>
+                      ) : (
+                        <input type="number" min="0" step="any" value={l.unitCost}
+                          onChange={(e) => setLine(l.key, { unitCost: e.target.value })}
+                          aria-label="Unit cost" />
+                      )}
                     </td>
                     <td className="r">{fmt(amount(l))}</td>
                     <td className="tight">
@@ -190,23 +185,30 @@ export function OrderForm({
         </div>
 
         <div className="totalbar">
-          <span style={{ color: "var(--muted)" }}>Expected total</span>
+          <span style={{ color: "var(--muted)" }}>Net value</span>
           <span className="big">{fmt(total)} MMK</span>
         </div>
       </div>
 
+      {shortages.length > 0 && (
+        <div className="alert">
+          Not enough stock to remove for{" "}
+          {shortages.map((l) => byId(l.itemId)?.code).join(", ")}. Posting will
+          be rejected — reduce the loss quantity.
+        </div>
+      )}
+
       <div className="field">
         <label htmlFor="memo">Note</label>
-        <input id="memo" name="memo" type="text" placeholder="Optional — English or Myanmar" />
+        <input id="memo" name="memo" type="text" placeholder="What this correction is for — English or Myanmar" />
       </div>
 
       <div className="actions">
-        <button type="submit" disabled={pending || total === 0}>
-          {pending ? "Saving…" : `Save ${isSales ? "sales" : "purchase"} order`}
+        <button type="submit" disabled={pending || lines.every((l) => !l.itemId || Number(l.qty) === 0) || shortages.length > 0}>
+          {pending ? "Posting…" : "Post adjustment"}
         </button>
         <span className="page-sub">
-          Commits nothing yet — no stock moves and nothing posts to the ledger
-          until this is delivered {isSales ? "" : "or received"}.
+          Posts straight to stock and the ledger — Dr/Cr Inventory against the Stock Adjustment account.
         </span>
       </div>
     </form>

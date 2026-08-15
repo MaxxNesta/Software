@@ -9,8 +9,10 @@ import {
   postSalesOrder, postPurchaseOrder, postDelivery, postGoodsReceipt,
   postSupplierPayment, postCustomerReceipt,
   postCashVoucher, postBankVoucher, postJournalVoucher,
-  postCashTransfer, postAccountOpening,
+  postCashTransfer, postAccountOpening, postStockAdjustment,
+  postSalesReturn, postPurchaseReturn,
   type InvoiceLine, type OrderLine, type FulfillmentLine, type Allocation, type VoucherLine,
+  type AdjustmentLine, type ReturnLine,
 } from "./posting";
 
 export type ActionResult = { error: string } | { ok: true };
@@ -414,7 +416,7 @@ export type NewItemInput = {
 
 export type PickerItem = {
   id: string; code: string; name: string; is_stocked: boolean;
-  item_group_id: string; on_hand: string; sale_price: string; avg_cost: string;
+  item_group_id: string; on_hand: string; sale_price: string; next_cost: string;
 };
 
 /**
@@ -499,7 +501,7 @@ export async function createItemInline(
         item_group_id: created.item_group_id,
         on_hand: "0",
         sale_price: String(input.price ?? 0),
-        avg_cost: "0",
+        next_cost: "0",
       },
     };
   } catch (e) {
@@ -613,6 +615,84 @@ export async function createPurchaseInvoice(_prev: unknown, fd: FormData): Promi
 
     docId = result.id;
     toastMsg = `Invoice ${result.docNo} posted`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/");
+  revalidatePath("/documents");
+  revalidatePath("/payables");
+  revalidatePath("/ledger");
+  revalidatePath("/items");
+  revalidatePath("/items/stock");
+  redirectWithToast(`/documents/${docId}`, toastMsg);
+}
+
+// -------------------------------------------------------------- returns --
+
+export async function createSalesReturn(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let docId: string;
+  let toastMsg = "Sales return posted";
+
+  try {
+    const co = await companyId();
+    const lines = parseLines(fd);
+
+    if (lines.length === 0) return { error: "Add at least one line with a quantity" };
+    if (!str(fd, "partner_id")) return { error: "Choose a customer" };
+    if (!str(fd, "location_id")) return { error: "Choose a warehouse" };
+
+    const result = await postSalesReturn({
+      companyId: co,
+      partnerId: str(fd, "partner_id"),
+      locationId: str(fd, "location_id"),
+      docDate: str(fd, "doc_date"),
+      memo: str(fd, "memo") || null,
+      reference: str(fd, "reference") || null,
+      sourceDocumentId: str(fd, "source_document_id") || null,
+      lines,
+    });
+
+    docId = result.id;
+    toastMsg = `Return ${result.docNo} posted`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/");
+  revalidatePath("/documents");
+  revalidatePath("/receivables");
+  revalidatePath("/ledger");
+  revalidatePath("/items");
+  revalidatePath("/items/stock");
+  redirectWithToast(`/documents/${docId}`, toastMsg);
+}
+
+export async function createPurchaseReturn(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let docId: string;
+  let toastMsg = "Purchase return posted";
+
+  try {
+    const co = await companyId();
+    const lines = parseLines(fd);
+
+    if (lines.length === 0) return { error: "Add at least one line with a quantity" };
+    if (!str(fd, "partner_id")) return { error: "Choose a supplier" };
+    if (!str(fd, "location_id")) return { error: "Choose a warehouse" };
+
+    const result = await postPurchaseReturn({
+      companyId: co,
+      partnerId: str(fd, "partner_id"),
+      locationId: str(fd, "location_id"),
+      docDate: str(fd, "doc_date"),
+      memo: str(fd, "memo") || null,
+      reference: str(fd, "reference") || null,
+      sourceDocumentId: str(fd, "source_document_id") || null,
+      lines,
+    });
+
+    docId = result.id;
+    toastMsg = `Return ${result.docNo} posted`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -1183,7 +1263,11 @@ export async function getFormData() {
          where company_id = ${co} and is_supplier and is_active order by code`,
     sql`select i.id, i.code, i.name, i.is_stocked, i.item_group_id,
                 coalesce(s.qty, 0) as on_hand,
-                coalesce(fn_moving_average_cost(${co}, i.id), 0) as avg_cost,
+                coalesce((
+                  select unit_cost from v_stock_lot_open
+                   where company_id = ${co} and item_id = i.id
+                   order by received_date, created_at limit 1
+                ), 0) as next_cost,
                 0 as sale_price
            from item i
            left join (select item_id, sum(qty_on_hand) as qty
@@ -1460,6 +1544,60 @@ export async function deleteSalesman(_prev: unknown, fd: FormData): Promise<Acti
 
   revalidatePath("/salespersons");
   redirectWithToast("/salespersons", "Salesperson deleted");
+}
+
+// ------------------------------------------------------ stock adjustments --
+
+function parseAdjustmentLines(fd: FormData): AdjustmentLine[] {
+  const raw = String(fd.get("lines") ?? "[]");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("Could not read the lines");
+  }
+  if (!Array.isArray(parsed)) throw new Error("Could not read the lines");
+
+  return parsed
+    .map((l: any) => ({
+      itemId: String(l.itemId ?? ""),
+      qty: Number(l.qty),
+      unitCost: l.unitCost !== "" && l.unitCost != null ? Number(l.unitCost) : undefined,
+    }))
+    .filter((l) => l.itemId && l.qty !== 0);
+}
+
+export async function createStockAdjustment(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let docId: string;
+  let toastMsg = "Stock adjustment posted";
+
+  try {
+    const co = await companyId();
+    const lines = parseAdjustmentLines(fd);
+
+    if (lines.length === 0) return { error: "Add at least one line with a quantity" };
+    if (!str(fd, "location_id")) return { error: "Choose a warehouse" };
+
+    const result = await postStockAdjustment({
+      companyId: co,
+      locationId: str(fd, "location_id"),
+      docDate: str(fd, "doc_date"),
+      memo: str(fd, "memo") || null,
+      reference: str(fd, "reference") || null,
+      lines,
+    });
+
+    docId = result.id;
+    toastMsg = `Adjustment ${result.docNo} posted`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/documents");
+  revalidatePath("/items");
+  revalidatePath("/items/stock");
+  revalidatePath("/inventory/movements");
+  redirectWithToast(`/documents/${docId}`, toastMsg);
 }
 
 // --------------------------------------------------- chart of accounts --

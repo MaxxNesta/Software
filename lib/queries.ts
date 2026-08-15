@@ -96,6 +96,23 @@ export async function getDocuments(companyId: string, docType?: string) {
      order by d.posting_date desc, d.doc_no desc`;
 }
 
+/**
+ * Sales invoices and deliveries a customer return can be posted against, so
+ * the return can be costed at what those units actually sold for instead of
+ * an estimate. Only what a return could plausibly reference — posted,
+ * customer-facing, stock-moving document types.
+ */
+export async function getReturnableSales(companyId: string) {
+  return sql`
+    select d.id, d.doc_type, d.doc_no, d.doc_date, d.partner_id
+      from document d
+     where d.company_id = ${companyId}
+       and d.doc_type in ('SALES_INVOICE', 'DELIVERY')
+       and d.status = 'POSTED'
+     order by d.doc_date desc, d.doc_no desc
+     limit 500`;
+}
+
 export async function getDocument(id: string) {
   const [doc] = await sql`
     select d.*, p.name as partner_name, p.code as partner_code,
@@ -309,6 +326,20 @@ export async function getPendingDeliveries(companyId: string) {
  * committed but not yet delivered (sales orders and to-deliver invoices),
  * and supply committed but not yet received (purchase orders).
  */
+/** Every movement of one item, oldest first — a stock card. */
+export async function getStockMovements(companyId: string, itemId: string) {
+  return sql`
+    select sm.id, sm.movement_date, sm.qty, sm.unit_cost, sm.total_cost,
+           sm.batch_no, sm.expiry_date, sm.created_at,
+           d.doc_no, d.doc_type, d.id as document_id,
+           l.code as location_code
+      from stock_movement sm
+      left join document d on d.id = sm.document_id
+      join location l on l.id = sm.location_id
+     where sm.company_id = ${companyId} and sm.item_id = ${itemId}
+     order by sm.movement_date, sm.created_at`;
+}
+
 export async function getReservedQty(companyId: string) {
   return sql`
     with so_remaining as (

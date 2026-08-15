@@ -87,6 +87,144 @@ function round4(n: number) {
   return Math.round(n * 10000) / 10000;
 }
 
+// ------------------------------------------------------------------ FIFO --
+//
+// Costing is FIFO, per warehouse. Every receipt creates a lot; every issue
+// draws down the oldest open lots at that item's own location until the
+// quantity is covered. Nothing is ever updated — a lot's remaining quantity
+// is always qty_received less the sum of what has been drawn from it.
+
+type FifoDraw = { lotId: string; qty: number; unitCost: number };
+type FifoPlan = { totalCost: number; unitCost: number; draws: FifoDraw[] };
+
+/**
+ * Reads the open lots oldest-first and decides what this issue draws from
+ * each, without writing anything yet — the stock_movement row this belongs
+ * to doesn't exist until after this returns, and consumption rows need its
+ * id. Locks the lots it reads (`for update`) so two issues can't both plan
+ * against the same remaining quantity.
+ */
+async function planFifoConsumption(
+  tx: TransactionSql, companyId: string, itemId: string, locationId: string, qty: number
+): Promise<FifoPlan> {
+  const lots = await tx`
+    select sl.id, sl.unit_cost,
+           sl.qty_received - coalesce(sum(c.qty), 0) as remaining
+      from stock_lot sl
+      left join stock_lot_consumption c on c.lot_id = sl.id
+     where sl.company_id = ${companyId} and sl.item_id = ${itemId} and sl.location_id = ${locationId}
+     group by sl.id, sl.unit_cost, sl.qty_received, sl.received_date, sl.created_at
+    having sl.qty_received - coalesce(sum(c.qty), 0) > 0.0001
+     order by sl.received_date, sl.created_at
+       for update of sl`;
+
+  let need = round4(qty);
+  const draws: FifoDraw[] = [];
+  let totalCost = 0;
+
+  for (const lot of lots) {
+    if (need <= 0) break;
+    const remaining = round4(Number(lot.remaining));
+    const take = Math.min(remaining, need);
+    if (take <= 0) continue;
+    draws.push({ lotId: lot.id, qty: take, unitCost: Number(lot.unit_cost) });
+    totalCost += take * Number(lot.unit_cost);
+    need = round4(need - take);
+  }
+
+  if (need > 0.0001) {
+    throw new Error("Not enough stock in any lot at this location to cover the quantity requested");
+  }
+
+  totalCost = round4(totalCost);
+  return { totalCost, unitCost: qty > 0 ? round4(totalCost / qty) : 0, draws };
+}
+
+/** Writes the consumption rows a plan decided on, against the movement it belongs to. */
+async function recordFifoConsumption(
+  tx: TransactionSql, companyId: string, stockMovementId: string, plan: FifoPlan
+) {
+  for (const d of plan.draws) {
+    await tx`
+      insert into stock_lot_consumption (company_id, lot_id, stock_movement_id, qty, unit_cost)
+      values (${companyId}, ${d.lotId}, ${stockMovementId}, ${d.qty}, ${d.unitCost})`;
+  }
+}
+
+/** Every receipt is its own lot — a goods receipt, a sales return, a found adjustment. */
+async function createFifoLot(
+  tx: TransactionSql, companyId: string, itemId: string, locationId: string,
+  receivedDate: string, unitCost: number, qty: number, stockMovementId: string
+) {
+  await tx`
+    insert into stock_lot (company_id, item_id, location_id, received_date, unit_cost, qty_received, stock_movement_id)
+    values (${companyId}, ${itemId}, ${locationId}, ${receivedDate}::date, ${unitCost}, ${qty}, ${stockMovementId})`;
+}
+
+/**
+ * A return or a found-stock adjustment has no purchase price of its own —
+ * it needs some cost to come back in at. Uses the cost of the newest open
+ * lot at this location as the best available "what stock is worth right
+ * now" estimate, falling back to the most recent lot ever received (even if
+ * fully drawn down) if nothing is currently open, and zero only if this
+ * item has never been received here at all.
+ */
+async function estimateCurrentCost(
+  tx: TransactionSql, companyId: string, itemId: string, locationId: string
+): Promise<number> {
+  const [open] = await tx`
+    select unit_cost from v_stock_lot_open
+     where company_id = ${companyId} and item_id = ${itemId} and location_id = ${locationId}
+     order by received_date desc, unit_cost desc
+     limit 1`;
+  if (open) return Number(open.unit_cost);
+
+  const [last] = await tx`
+    select unit_cost from stock_lot
+     where company_id = ${companyId} and item_id = ${itemId} and location_id = ${locationId}
+     order by received_date desc, created_at desc
+     limit 1`;
+  return last ? Number(last.unit_cost) : 0;
+}
+
+/**
+ * A return linked to the sale it came from should carry what those units
+ * actually cost when they left, not today's cost. Sales invoices never move
+ * stock themselves — postSaleWithDelivery always posts a separate DELIVERY
+ * and points the invoice's source_document_id at it — so this walks that
+ * one hop when given an invoice, then averages what the delivery's own FIFO
+ * consumption paid for this item. Null if the link doesn't lead anywhere
+ * costed (no delivery, or the item wasn't on it), so the caller can fall
+ * back to estimateCurrentCost.
+ */
+async function resolveSaleCost(
+  tx: TransactionSql, companyId: string, sourceDocumentId: string, itemId: string
+): Promise<number | null> {
+  const [src] = await tx`
+    select doc_type, source_document_id from document
+     where id = ${sourceDocumentId} and company_id = ${companyId}`;
+  if (!src) return null;
+
+  let deliveryId: string | null = null;
+  if (src.doc_type === "DELIVERY") {
+    deliveryId = sourceDocumentId;
+  } else if (src.doc_type === "SALES_INVOICE" && src.source_document_id) {
+    const [linked] = await tx`
+      select doc_type from document where id = ${src.source_document_id} and company_id = ${companyId}`;
+    if (linked?.doc_type === "DELIVERY") deliveryId = src.source_document_id;
+  }
+  if (!deliveryId) return null;
+
+  const [agg] = await tx`
+    select coalesce(sum(c.qty), 0) as qty, coalesce(sum(c.qty * c.unit_cost), 0) as cost
+      from stock_movement sm
+      join stock_lot_consumption c on c.stock_movement_id = sm.id
+     where sm.company_id = ${companyId} and sm.document_id = ${deliveryId} and sm.item_id = ${itemId}`;
+
+  const qty = Number(agg.qty);
+  return qty > 0 ? round4(Number(agg.cost) / qty) : null;
+}
+
 /** Collapses journal lines that hit the same account, dropping any that net to zero. */
 function consolidate(lines: JournalLine[]): JournalLine[] {
   const byKey = new Map<string, JournalLine>();
@@ -255,14 +393,9 @@ async function _postDelivery(tx: TransactionSql, input: FulfillmentInput) {
     if (!item) throw new Error("Item not found");
     if (!item.is_stocked) throw new Error(`${item.code} (${item.name}) is not stocked and cannot be delivered`);
 
-    // Cost is the moving average at this moment, frozen onto the movement.
-    // Recomputing it later would silently restate closed periods.
-    const costRows = await tx`
-      select fn_moving_average_cost(${companyId}, ${line.itemId}) as cost,
-             fn_qty_on_hand(${companyId}, ${line.itemId}, ${locationId}) as on_hand`;
-
-    const unitCost = Number(costRows[0].cost);
-    const onHand = Number(costRows[0].on_hand);
+    const onHandRows = await tx`
+      select fn_qty_on_hand(${companyId}, ${line.itemId}, ${locationId}) as on_hand`;
+    const onHand = Number(onHandRows[0].on_hand);
 
     if (onHand < line.qty) {
       throw new Error(
@@ -271,7 +404,12 @@ async function _postDelivery(tx: TransactionSql, input: FulfillmentInput) {
       );
     }
 
-    const totalCost = round4(unitCost * line.qty);
+    // FIFO: drawn from the oldest open lots at this location, frozen onto
+    // the movement. Recomputing it later would silently restate closed
+    // periods.
+    const plan = await planFifoConsumption(tx, companyId, line.itemId, locationId, line.qty);
+    const unitCost = plan.unitCost;
+    const totalCost = plan.totalCost;
     deliveredValue += totalCost;
 
     await tx`
@@ -284,13 +422,15 @@ async function _postDelivery(tx: TransactionSql, input: FulfillmentInput) {
          ${line.qty}, ${item.base_uom_id}, ${line.qty}, ${unitCost}, ${totalCost},
          ${totalCost}, ${line.focReasonId ?? null}, ${line.sourceLineId ?? null})`;
 
-    await tx`
+    const [movement] = await tx`
       insert into stock_movement
         (company_id, item_id, location_id, movement_date, qty,
          unit_cost, total_cost, document_id)
       values
         (${companyId}, ${line.itemId}, ${locationId}, ${docDate}::date,
-         ${-line.qty}, ${unitCost}, ${-totalCost}, ${doc.id})`;
+         ${-line.qty}, ${unitCost}, ${-totalCost}, ${doc.id})
+      returning id`;
+    await recordFifoConsumption(tx, companyId, movement.id, plan);
 
     const inventory = await tx`
       select fn_resolve_account_for_item(${companyId}, 'INVENTORY', ${line.itemId}) as a`;
@@ -559,13 +699,15 @@ async function _postGoodsReceipt(tx: TransactionSql, input: FulfillmentInput) {
          ${line.qty}, ${item.base_uom_id}, ${line.qty}, ${unitCost},
          ${net}, 0, ${net}, ${line.sourceLineId ?? null})`;
 
-    await tx`
+    const [movement] = await tx`
       insert into stock_movement
         (company_id, item_id, location_id, movement_date, qty,
          unit_cost, total_cost, document_id)
       values
         (${companyId}, ${line.itemId}, ${locationId}, ${docDate}::date,
-         ${line.qty}, ${unitCost}, ${net}, ${doc.id})`;
+         ${line.qty}, ${unitCost}, ${net}, ${doc.id})
+      returning id`;
+    await createFifoLot(tx, companyId, line.itemId, locationId, docDate, unitCost, line.qty, movement.id);
 
     const inventory = await tx`
       select fn_resolve_account_for_item(${companyId}, 'INVENTORY', ${line.itemId}) as a`;
@@ -726,6 +868,391 @@ export async function postPurchaseWithReceipt(input: InvoiceInput) {
     }
 
     return _postPurchaseInvoice(tx, { ...input, goodsReceiptId });
+  });
+}
+
+// =========================================================================
+// Stock adjustments
+// =========================================================================
+//
+// Neither a sale nor a purchase — a correction. Damage, shrinkage, or a
+// physical count that disagrees with the ledger.
+
+export type AdjustmentLine = {
+  itemId: string;
+  /** Signed: positive is stock found, negative is stock lost. */
+  qty: number;
+  /** Only meaningful for an increase — a decrease always leaves at its carried cost. */
+  unitCost?: number;
+};
+export type AdjustmentInput = {
+  companyId: string;
+  locationId: string;
+  docDate: string;
+  memo?: string | null;
+  reference?: string | null;
+  lines: AdjustmentLine[];
+};
+
+/**
+ *   Increase: Dr Inventory / Cr Stock Adjustment
+ *   Decrease: Dr Stock Adjustment / Cr Inventory
+ */
+export async function postStockAdjustment(input: AdjustmentInput) {
+  const lines = input.lines.filter((l) => l.qty !== 0);
+  if (lines.length === 0) throw new Error("An adjustment needs at least one line");
+
+  return sql.begin(async (tx) => {
+    const { companyId, locationId, docDate } = input;
+
+    const fyRows = await tx`select fn_fiscal_year_for(${companyId}, ${docDate}::date) as fy`;
+    const fiscalYear = fyRows[0]?.fy ?? null;
+    if (!fiscalYear) throw new Error(`No fiscal year covers ${docDate}`);
+
+    const noRows = await tx`
+      select fn_next_document_no(${companyId}, 'STOCK_ADJUSTMENT', ${fiscalYear}::uuid) as no`;
+    const docNo = noRows[0].no;
+
+    const [doc] = await tx`
+      insert into document
+        (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date,
+         location_id, currency, exchange_rate, status,
+         net_total, tax_total, gross_total, memo, posted_at, reference)
+      values
+        (${companyId}, 'STOCK_ADJUSTMENT', ${docNo}, ${fiscalYear}, ${docDate}::date,
+         ${docDate}::date, ${locationId}, 'MMK', 1, 'POSTED',
+         0, 0, 0, ${input.memo ?? null}, now(), ${input.reference ?? null})
+      returning id`;
+
+    const journal: JournalLine[] = [];
+    let lineNo = 0;
+    let netValue = 0;
+
+    for (const line of lines) {
+      lineNo++;
+
+      const [item] = await tx`
+        select id, code, name, is_stocked, base_uom_id from item where id = ${line.itemId}`;
+      if (!item) throw new Error("Item not found");
+      if (!item.is_stocked) throw new Error(`${item.code} (${item.name}) is not stocked and cannot be adjusted`);
+
+      let unitCost: number;
+      let totalCost: number;
+      let plan: FifoPlan | null = null;
+
+      if (line.qty < 0) {
+        const onHandRows = await tx`
+          select fn_qty_on_hand(${companyId}, ${line.itemId}, ${locationId}) as on_hand`;
+        const onHand = Number(onHandRows[0].on_hand);
+        if (onHand < -line.qty) {
+          throw new Error(
+            `Not enough ${item.code} (${item.name}) at this location — ` +
+              `${onHand} on hand, ${-line.qty} requested`
+          );
+        }
+        plan = await planFifoConsumption(tx, companyId, line.itemId, locationId, -line.qty);
+        unitCost = plan.unitCost;
+        totalCost = -plan.totalCost;
+      } else {
+        unitCost = line.unitCost ?? await estimateCurrentCost(tx, companyId, line.itemId, locationId);
+        totalCost = round4(unitCost * line.qty);
+      }
+
+      netValue += totalCost;
+
+      await tx`
+        insert into document_line
+          (company_id, document_id, line_no, item_id, location_id,
+           entered_qty, entered_uom_id, base_qty, unit_price, net_amount, gross_amount)
+        values
+          (${companyId}, ${doc.id}, ${lineNo}, ${line.itemId}, ${locationId},
+           ${line.qty}, ${item.base_uom_id}, ${line.qty}, ${unitCost}, ${totalCost}, ${totalCost})`;
+
+      const [movement] = await tx`
+        insert into stock_movement
+          (company_id, item_id, location_id, movement_date, qty, unit_cost, total_cost, document_id)
+        values
+          (${companyId}, ${line.itemId}, ${locationId}, ${docDate}::date,
+           ${line.qty}, ${unitCost}, ${totalCost}, ${doc.id})
+        returning id`;
+
+      if (plan) {
+        await recordFifoConsumption(tx, companyId, movement.id, plan);
+      } else {
+        await createFifoLot(tx, companyId, line.itemId, locationId, docDate, unitCost, line.qty, movement.id);
+      }
+
+      const inventory = await tx`
+        select fn_resolve_account_for_item(${companyId}, 'INVENTORY', ${line.itemId}) as a`;
+      journal.push({ accountId: inventory[0].a, amount: totalCost, locationId });
+    }
+
+    netValue = round4(netValue);
+    const adj = await tx`select fn_system_account(${companyId}, 'STOCK_ADJUSTMENT') as a`;
+    journal.push({ accountId: adj[0].a, amount: -netValue, locationId });
+
+    const entryId = await writeJournal(
+      tx, companyId, docDate, "STOCK_ADJUSTMENT", doc.id, `${docNo} stock adjustment`, journal
+    );
+
+    const absValue = Math.abs(netValue);
+    await tx`
+      update document set journal_entry_id = ${entryId}, net_total = ${absValue}, gross_total = ${absValue}
+       where id = ${doc.id}`;
+
+    return { id: doc.id as string, docNo: docNo as string };
+  });
+}
+
+// =========================================================================
+// Returns
+// =========================================================================
+//
+// One document each, not a receipt plus a separate credit note — goods and
+// money move back together, since that is how a small distributor's return
+// actually happens. Cost and price are reversed independently, exactly
+// mirroring how the original sale posted them independently: the stock side
+// moves at today's moving average, the revenue/payable side moves at
+// whatever this return says the price was. They are allowed to differ.
+
+export type ReturnLine = {
+  itemId: string;
+  qty: number;
+  unitPrice: number;
+  focReasonId?: string | null;
+};
+export type ReturnInput = {
+  companyId: string;
+  partnerId: string;
+  locationId: string;
+  docDate: string;
+  memo?: string | null;
+  reference?: string | null;
+  /** The original sales/purchase invoice, if this return is against one. */
+  sourceDocumentId?: string | null;
+  lines: ReturnLine[];
+};
+
+/**
+ * Goods come back in, and the customer owes less.
+ *
+ *   Dr Inventory     / Cr Cost of Goods Sold  (stock returns, at today's cost)
+ *   Dr Sales Returns / Cr Accounts Receivable (revenue reversed, at the line price)
+ */
+export async function postSalesReturn(input: ReturnInput) {
+  if (input.lines.length === 0) throw new Error("A return needs at least one line");
+
+  return sql.begin(async (tx) => {
+    const { companyId, partnerId, locationId, docDate } = input;
+
+    const fyRows = await tx`select fn_fiscal_year_for(${companyId}, ${docDate}::date) as fy`;
+    const fiscalYear = fyRows[0]?.fy ?? null;
+    if (!fiscalYear) throw new Error(`No fiscal year covers ${docDate}`);
+
+    const noRows = await tx`
+      select fn_next_document_no(${companyId}, 'SALES_RETURN', ${fiscalYear}::uuid) as no`;
+    const docNo = noRows[0].no;
+
+    const netTotal = round4(
+      input.lines.reduce((s, l) => s + (l.focReasonId ? 0 : l.qty * l.unitPrice), 0)
+    );
+
+    const [doc] = await tx`
+      insert into document
+        (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date,
+         partner_id, location_id, currency, exchange_rate, status,
+         net_total, tax_total, gross_total, memo, posted_at, reference, source_document_id)
+      values
+        (${companyId}, 'SALES_RETURN', ${docNo}, ${fiscalYear}, ${docDate}::date,
+         ${docDate}::date, ${partnerId}, ${locationId}, 'MMK', 1, 'POSTED',
+         ${netTotal}, 0, ${netTotal}, ${input.memo ?? null}, now(), ${input.reference ?? null},
+         ${input.sourceDocumentId ?? null})
+      returning id`;
+
+    const journal: JournalLine[] = [];
+    let lineNo = 0;
+
+    for (const line of input.lines) {
+      lineNo++;
+
+      const [item] = await tx`
+        select id, code, name, is_stocked, base_uom_id from item where id = ${line.itemId}`;
+      if (!item) throw new Error("Item not found");
+
+      const net = line.focReasonId ? 0 : round4(line.qty * line.unitPrice);
+
+      await tx`
+        insert into document_line
+          (company_id, document_id, line_no, item_id, location_id,
+           entered_qty, entered_uom_id, base_qty, unit_price,
+           net_amount, tax_amount, gross_amount, foc_reason_id)
+        values
+          (${companyId}, ${doc.id}, ${lineNo}, ${line.itemId}, ${locationId},
+           ${line.qty}, ${item.base_uom_id}, ${line.qty},
+           ${line.focReasonId ? 0 : line.unitPrice},
+           ${net}, 0, ${net}, ${line.focReasonId ?? null})`;
+
+      if (item.is_stocked) {
+        // Returned stock comes back in as a fresh lot. If the return names
+        // the sale it came from, cost it at what those units actually sold
+        // for; otherwise fall back to what stock here is worth right now.
+        const unitCost =
+          (input.sourceDocumentId
+            ? await resolveSaleCost(tx, companyId, input.sourceDocumentId, line.itemId)
+            : null) ?? (await estimateCurrentCost(tx, companyId, line.itemId, locationId));
+        const totalCost = round4(unitCost * line.qty);
+
+        const [movement] = await tx`
+          insert into stock_movement
+            (company_id, item_id, location_id, movement_date, qty, unit_cost, total_cost, document_id)
+          values
+            (${companyId}, ${line.itemId}, ${locationId}, ${docDate}::date,
+             ${line.qty}, ${unitCost}, ${totalCost}, ${doc.id})
+          returning id`;
+        await createFifoLot(tx, companyId, line.itemId, locationId, docDate, unitCost, line.qty, movement.id);
+
+        const inventory = await tx`
+          select fn_resolve_account_for_item(${companyId}, 'INVENTORY', ${line.itemId}) as a`;
+        journal.push({ accountId: inventory[0].a, amount: totalCost, locationId });
+
+        if (line.focReasonId) {
+          const [foc] = await tx`select account_id from foc_reason where id = ${line.focReasonId}`;
+          journal.push({ accountId: foc.account_id, amount: -totalCost, locationId });
+        } else {
+          const cogs = await tx`
+            select fn_resolve_account_for_item(${companyId}, 'COGS', ${line.itemId}) as a`;
+          journal.push({ accountId: cogs[0].a, amount: -totalCost, locationId });
+        }
+      }
+
+      if (net !== 0) {
+        const returns = await tx`
+          select fn_resolve_account_for_item(${companyId}, 'SALES_RETURN', ${line.itemId}) as a`;
+        journal.push({ accountId: returns[0].a, amount: net, locationId });
+      }
+    }
+
+    if (netTotal !== 0) {
+      const ar = await tx`
+        select fn_resolve_control_account(${companyId}, 'AR_CONTROL', ${partnerId}) as a`;
+      journal.push({ accountId: ar[0].a, amount: -netTotal, partnerId });
+    }
+
+    const entryId = await writeJournal(
+      tx, companyId, docDate, "SALES_RETURN", doc.id, `${docNo} sales return`, journal
+    );
+
+    await tx`update document set journal_entry_id = ${entryId} where id = ${doc.id}`;
+
+    return { id: doc.id as string, docNo: docNo as string };
+  });
+}
+
+/**
+ * Goods go back to the supplier, and what's owed drops.
+ *
+ *   Dr Accounts Payable / Cr Inventory (at today's carried cost)
+ *
+ * The credit the supplier agrees to and the cost the stock was carried at
+ * are allowed to differ — the same price-variance account a purchase
+ * invoice uses absorbs the difference.
+ */
+export async function postPurchaseReturn(input: ReturnInput) {
+  if (input.lines.length === 0) throw new Error("A return needs at least one line");
+
+  return sql.begin(async (tx) => {
+    const { companyId, partnerId, locationId, docDate } = input;
+
+    const fyRows = await tx`select fn_fiscal_year_for(${companyId}, ${docDate}::date) as fy`;
+    const fiscalYear = fyRows[0]?.fy ?? null;
+    if (!fiscalYear) throw new Error(`No fiscal year covers ${docDate}`);
+
+    const noRows = await tx`
+      select fn_next_document_no(${companyId}, 'PURCHASE_RETURN', ${fiscalYear}::uuid) as no`;
+    const docNo = noRows[0].no;
+
+    const netTotal = round4(input.lines.reduce((s, l) => s + l.qty * l.unitPrice, 0));
+
+    const [doc] = await tx`
+      insert into document
+        (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date,
+         partner_id, location_id, currency, exchange_rate, status,
+         net_total, tax_total, gross_total, memo, posted_at, reference, source_document_id)
+      values
+        (${companyId}, 'PURCHASE_RETURN', ${docNo}, ${fiscalYear}, ${docDate}::date,
+         ${docDate}::date, ${partnerId}, ${locationId}, 'MMK', 1, 'POSTED',
+         ${netTotal}, 0, ${netTotal}, ${input.memo ?? null}, now(), ${input.reference ?? null},
+         ${input.sourceDocumentId ?? null})
+      returning id`;
+
+    const journal: JournalLine[] = [];
+    let lineNo = 0;
+
+    for (const line of input.lines) {
+      lineNo++;
+
+      const [item] = await tx`
+        select id, code, name, is_stocked, base_uom_id from item where id = ${line.itemId}`;
+      if (!item) throw new Error("Item not found");
+      if (!item.is_stocked) throw new Error(`${item.code} (${item.name}) is not stocked and cannot be returned`);
+
+      const net = round4(line.qty * line.unitPrice);
+
+      const onHandRows = await tx`
+        select fn_qty_on_hand(${companyId}, ${line.itemId}, ${locationId}) as on_hand`;
+      const onHand = Number(onHandRows[0].on_hand);
+      if (onHand < line.qty) {
+        throw new Error(
+          `Not enough ${item.code} (${item.name}) at this location — ` +
+            `${onHand} on hand, ${line.qty} requested`
+        );
+      }
+
+      const plan = await planFifoConsumption(tx, companyId, line.itemId, locationId, line.qty);
+      const unitCost = plan.unitCost;
+      const totalCost = plan.totalCost;
+
+      await tx`
+        insert into document_line
+          (company_id, document_id, line_no, item_id, location_id,
+           entered_qty, entered_uom_id, base_qty, unit_price,
+           net_amount, tax_amount, gross_amount)
+        values
+          (${companyId}, ${doc.id}, ${lineNo}, ${line.itemId}, ${locationId},
+           ${line.qty}, ${item.base_uom_id}, ${line.qty}, ${line.unitPrice},
+           ${net}, 0, ${net})`;
+
+      const [movement] = await tx`
+        insert into stock_movement
+          (company_id, item_id, location_id, movement_date, qty, unit_cost, total_cost, document_id)
+        values
+          (${companyId}, ${line.itemId}, ${locationId}, ${docDate}::date,
+           ${-line.qty}, ${unitCost}, ${-totalCost}, ${doc.id})
+        returning id`;
+      await recordFifoConsumption(tx, companyId, movement.id, plan);
+
+      const inventory = await tx`
+        select fn_resolve_account_for_item(${companyId}, 'INVENTORY', ${line.itemId}) as a`;
+      journal.push({ accountId: inventory[0].a, amount: -totalCost, locationId });
+
+      const variance = round4(net - totalCost);
+      if (variance !== 0) {
+        const pv = await tx`select fn_system_account(${companyId}, 'PURCHASE_PRICE_VARIANCE') as a`;
+        journal.push({ accountId: pv[0].a, amount: -variance, locationId });
+      }
+    }
+
+    const ap = await tx`
+      select fn_resolve_control_account(${companyId}, 'AP_CONTROL', ${partnerId}) as a`;
+    journal.push({ accountId: ap[0].a, amount: netTotal, partnerId });
+
+    const entryId = await writeJournal(
+      tx, companyId, docDate, "PURCHASE_RETURN", doc.id, `${docNo} purchase return`, journal
+    );
+
+    await tx`update document set journal_entry_id = ${entryId} where id = ${doc.id}`;
+
+    return { id: doc.id as string, docNo: docNo as string };
   });
 }
 

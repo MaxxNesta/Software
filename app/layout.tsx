@@ -41,6 +41,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <NavLink href="/sales/orders/new">New sales order</NavLink>
               <NavLink href="/sales/new">New sales invoice</NavLink>
               <NavLink href="/sales/deliver">Deliveries</NavLink>
+              <NavLink href="/sales/returns/new">Customer return</NavLink>
               <NavLink href="/receivables/receive">Receive payment</NavLink>
               <NavLink href="/receivables" exact>Receivables</NavLink>
             </NavGroup>
@@ -49,6 +50,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <NavLink href="/purchases/orders/new">New purchase order</NavLink>
               <NavLink href="/purchases/new">New purchase invoice</NavLink>
               <NavLink href="/purchases/receive">Goods receipts</NavLink>
+              <NavLink href="/purchases/returns/new">Supplier return</NavLink>
               <NavLink href="/payables/pay">Pay supplier</NavLink>
               <NavLink href="/payables" exact>Payables</NavLink>
             </NavGroup>
@@ -81,13 +83,18 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <NavLink href="/finance/cash-flow">Cash flow</NavLink>
             </NavGroup>
 
-            <NavGroup label="Master data" match={["/items", "/partners", "/warehouses", "/salespersons"]}>
+            <NavGroup label="Inventory" match={["/items/stock", "/inventory", "/warehouses"]}>
+              <NavLink href="/items/stock">Stock overview</NavLink>
+              <NavLink href="/inventory/movements">Stock movements</NavLink>
+              <NavLink href="/inventory/adjustments">Adjustments</NavLink>
+              <NavLink href="/warehouses">Warehouses</NavLink>
+            </NavGroup>
+
+            <NavGroup label="Master data" match={["/items/categories", "/items/subcategories", "/items", "/partners", "/salespersons"]}>
               <NavLink href="/items/categories">Categories</NavLink>
               <NavLink href="/items/subcategories">Sub category</NavLink>
               <NavLink href="/items" exact>Items</NavLink>
-              <NavLink href="/items/stock">Stock</NavLink>
               <NavLink href="/partners">Partners</NavLink>
-              <NavLink href="/warehouses">Warehouses</NavLink>
               <NavLink href="/salespersons">Salespersons</NavLink>
             </NavGroup>
 
