@@ -314,6 +314,51 @@ export async function getDocumentOutstanding(documentId: string): Promise<number
   return row ? Number(row.outstanding) : 0;
 }
 
+/**
+ * Every document connected to this one via source_document_id, either
+ * direction — the real documents behind a chain diagram like
+ * PO → GR → PI → Payment, so the detail page can link each stage to
+ * whatever actually exists instead of just labelling the stage names.
+ * Expands outward a few hops at a time until nothing new turns up.
+ */
+export async function getChainDocuments(documentId: string) {
+  const seen = new Map<string, { id: string; doc_type: string; doc_no: string; source_document_id: string | null }>();
+  let frontier = [documentId];
+
+  for (let hop = 0; hop < 4 && frontier.length > 0; hop++) {
+    const rows = await sql`
+      select id, doc_type, doc_no, source_document_id
+        from document
+       where id = any(${frontier}) or source_document_id = any(${frontier})`;
+    const next: string[] = [];
+    for (const r of rows as any[]) {
+      if (!seen.has(r.id)) {
+        seen.set(r.id, r);
+        next.push(r.id);
+      }
+    }
+    frontier = next;
+  }
+
+  return [...seen.values()];
+}
+
+/**
+ * The payment that settled this invoice, if any — payments allocate against
+ * invoices via payment_allocation, not source_document_id, so they sit
+ * outside the chain getChainDocuments walks and need their own lookup.
+ */
+export async function getSettlingPayment(invoiceId: string) {
+  const [row] = await sql`
+    select d.id, d.doc_type, d.doc_no
+      from payment_allocation pa
+      join document d on d.id = pa.payment_id
+     where pa.invoice_id = ${invoiceId}
+     order by d.posting_date desc
+     limit 1`;
+  return row ?? null;
+}
+
 export async function getStock(companyId: string) {
   return sql`
     select item_code, item_name, location_code,

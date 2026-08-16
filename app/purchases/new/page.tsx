@@ -4,7 +4,12 @@ import { allCategories } from "@/lib/tree";
 import { sql } from "@/lib/db";
 import { InvoiceForm } from "@/components/invoice-form";
 
-export default async function NewPurchaseInvoice() {
+export default async function NewPurchaseInvoice({
+  searchParams,
+}: {
+  searchParams: Promise<{ goods_receipt_id?: string }>;
+}) {
+  const { goods_receipt_id } = await searchParams;
   const { suppliers, items, locations, uoms, cashAccounts } = await getFormData();
   const [co] = await sql`select id from company order by created_at limit 1`;
   const categories = await allCategories(co.id);
@@ -55,6 +60,7 @@ export default async function NewPurchaseInvoice() {
         today={today}
         cashAccounts={cashAccounts as never}
         goodsReceipts={goodsReceipts as never}
+        initialGoodsReceiptId={goods_receipt_id}
       />
     </>
   );

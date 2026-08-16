@@ -29,6 +29,7 @@ export function ReceiptForm({
   categories,
   uoms,
   purchaseInvoices,
+  initialInvoiceId,
 }: {
   action: (prev: unknown, fd: FormData) => Promise<ActionResult>;
   suppliers: Partner[];
@@ -39,6 +40,8 @@ export function ReceiptForm({
   uoms: { id: string; code: string; name: string }[];
   /** Open (unmatched) purchase invoices this receipt can match against — the bill arrived first. */
   purchaseInvoices?: OpenDoc[];
+  /** Arrived via "Create goods receipt" on a specific invoice's own page — match it immediately. */
+  initialInvoiceId?: string;
 }) {
   const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
     action as never,
@@ -77,6 +80,26 @@ export function ReceiptForm({
       }))
     );
   }
+
+  // Arrived from a specific invoice's own page — its supplier isn't chosen
+  // yet at this point, so this searches the full list rather than
+  // openInvoices (which only exists once a supplier is picked).
+  useEffect(() => {
+    if (!initialInvoiceId) return;
+    const pi = (purchaseInvoices ?? []).find((d) => d.id === initialInvoiceId);
+    if (!pi) return;
+    setPartnerId(pi.partner_id);
+    setMatchedPiId(pi.id);
+    setLines(
+      pi.lines.map((l, idx) => ({
+        key: idx + 1,
+        itemId: l.itemId,
+        qty: String(l.qty),
+        unitCost: String(l.unitPrice),
+      }))
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialInvoiceId]);
 
   function setLine(key: number, patch: Partial<Line>) {
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));

@@ -9,6 +9,8 @@ import {
   getDocumentOutstanding,
   getOpenSalesOrders,
   getOpenPurchaseOrders,
+  getChainDocuments,
+  getSettlingPayment,
 } from "@/lib/queries";
 import { createDelivery, createGoodsReceipt } from "@/lib/actions";
 import { FulfillOrderForm } from "@/components/fulfill-order-form";
@@ -33,10 +35,11 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
   const doc = await getDocument(id);
   if (!doc) notFound();
 
-  const [lines, journal, downstream] = await Promise.all([
+  const [lines, journal, downstream, chainDocuments] = await Promise.all([
     getDocumentLines(id),
     getJournalForDocument(doc.journal_entry_id),
     getDownstream(id),
+    getChainDocuments(id),
   ]);
 
   const chain = CHAINS[doc.doc_type] ?? [doc.doc_type];
@@ -47,6 +50,32 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
   // not making the user go find themselves in a separate list.
   const isOpenOrder = (doc.doc_type === "SALES_ORDER" || doc.doc_type === "PURCHASE_ORDER") && doc.status === "POSTED";
   const isInvoice = (doc.doc_type === "SALES_INVOICE" || doc.doc_type === "PURCHASE_INVOICE") && doc.status === "POSTED";
+
+  // Real documents behind each stage of the chain, not just the stage's
+  // name — resolved from whatever's actually connected to this one via
+  // source_document_id, in either direction. Payment sits outside that
+  // chain (it allocates against invoices, it isn't sourced from one), so
+  // it gets its own lookup once an invoice is found.
+  const stageDoc: Record<string, { id: string; doc_no: string } | null> = {};
+  for (const step of chain) {
+    if (step === "SUPPLIER_PAYMENT" || step === "CUSTOMER_RECEIPT") continue;
+    stageDoc[step] = (chainDocuments as any[]).find((d) => d.doc_type === step) ?? null;
+  }
+  const invoiceStage = stageDoc["PURCHASE_INVOICE"] ?? stageDoc["SALES_INVOICE"] ?? null;
+  const paymentStep = chain.includes("SUPPLIER_PAYMENT") ? "SUPPLIER_PAYMENT" : "CUSTOMER_RECEIPT";
+  if (chain.includes(paymentStep)) {
+    stageDoc[paymentStep] = invoiceStage ? ((await getSettlingPayment(invoiceStage.id)) as any) : null;
+  }
+
+  // A goods receipt nothing has matched to yet, or a purchase invoice that
+  // never named a receipt and no receipt has matched to it either — the
+  // two ways this session's GR/IR matching work can still be left undone.
+  const needsInvoiceMatch =
+    doc.doc_type === "GOODS_RECEIPT" && doc.status === "POSTED" &&
+    !downstream.some((d: any) => d.doc_type === "PURCHASE_INVOICE");
+  const needsReceiptMatch =
+    doc.doc_type === "PURCHASE_INVOICE" && doc.status === "POSTED" &&
+    !doc.source_id && !downstream.some((d: any) => d.doc_type === "GOODS_RECEIPT");
 
   let orderLines: {
     lineId: string; itemId: string; itemCode: string; itemName: string;
@@ -76,13 +105,51 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
         </span>
       </div>
 
-      <div className="flow">
-        {chain.map((step, i) => (
-          <span key={step} style={{ display: "contents" }}>
-            {i > 0 && <span className="flow-arrow">→</span>}
-            <span className={`flow-node ${step === doc.doc_type ? "here" : ""}`}>{label(step)}</span>
+      {(needsInvoiceMatch || needsReceiptMatch) && (
+        <div className="actions" style={{ marginTop: "-0.5rem" }}>
+          <Link
+            href={
+              needsInvoiceMatch
+                ? `/purchases/new?goods_receipt_id=${doc.id}`
+                : `/purchases/receive/new?match_invoice_id=${doc.id}`
+            }
+            className="btn"
+          >
+            {needsInvoiceMatch ? "Create purchase invoice" : "Create goods receipt"} — {money(doc.gross_total)}
+          </Link>
+          <span className="page-sub">
+            {needsInvoiceMatch
+              ? "Nothing has billed for this receipt yet."
+              : "Nothing has recorded these goods arriving yet."}
           </span>
-        ))}
+        </div>
+      )}
+
+      <div className="flow">
+        {chain.map((step, i) => {
+          const resolved = stageDoc[step];
+          return (
+            <span key={step} style={{ display: "contents" }}>
+              {i > 0 && <span className="flow-arrow">→</span>}
+              {resolved ? (
+                <Link
+                  href={`/documents/${resolved.id}`}
+                  className={`flow-node ${step === doc.doc_type ? "here" : ""}`}
+                >
+                  {resolved.doc_no}
+                </Link>
+              ) : (
+                <span
+                  className={`flow-node ${step === doc.doc_type ? "here" : ""}`}
+                  style={step === doc.doc_type ? undefined : { opacity: 0.55 }}
+                  title={step === doc.doc_type ? undefined : "Not linked yet"}
+                >
+                  {label(step)}
+                </span>
+              )}
+            </span>
+          );
+        })}
       </div>
 
       {isOpenOrder && orderLines.length > 0 && (

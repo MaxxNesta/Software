@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import type { ActionResult, PickerItem } from "@/lib/actions";
 import { ItemPicker } from "./item-picker";
 
@@ -34,6 +34,7 @@ export function InvoiceForm({
   uoms,
   cashAccounts,
   goodsReceipts,
+  initialGoodsReceiptId,
 }: {
   kind: "sales" | "purchase";
   action: (prev: unknown, fd: FormData) => Promise<ActionResult>;
@@ -46,6 +47,8 @@ export function InvoiceForm({
   cashAccounts?: CashAccount[];
   /** Open (unmatched) goods receipts this invoice can match against — purchase only. */
   goodsReceipts?: OpenDoc[];
+  /** Arrived via "Create purchase invoice" on a specific receipt's own page — match it immediately. */
+  initialGoodsReceiptId?: string;
 }) {
   const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
     action as never,
@@ -81,6 +84,26 @@ export function InvoiceForm({
       }))
     );
   }
+
+  // Arrived from a specific receipt's own page — its supplier isn't chosen
+  // yet at this point, so this searches the full list rather than
+  // openReceipts (which only exists once a supplier is picked).
+  useEffect(() => {
+    if (!initialGoodsReceiptId) return;
+    const gr = (goodsReceipts ?? []).find((d) => d.id === initialGoodsReceiptId);
+    if (!gr) return;
+    setPartnerId(gr.partner_id);
+    setMatchedGrId(gr.id);
+    setLines(
+      gr.lines.map((l, idx) => ({
+        key: idx + 1,
+        itemId: l.itemId,
+        qty: String(l.qty),
+        unitPrice: String(l.unitPrice),
+      }))
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialGoodsReceiptId]);
 
   function setLine(key: number, patch: Partial<Line>) {
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
