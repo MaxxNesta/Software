@@ -2,11 +2,15 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { sql } from "@/lib/db";
 import { money, qty } from "@/lib/db";
-import { createCategory, createItem, insertCategoryAbove, moveCategory } from "@/lib/actions";
+import {
+  createCategory, createItem, insertCategoryAbove, moveCategory,
+  updateCategory, deactivateCategory, deleteCategory,
+} from "@/lib/actions";
 import { getBrands } from "@/lib/queries";
 import { allCategories, childrenOf, trail, depthOf, levelCounts, branchIds, levelLabel, levelLabelPlural, MAX_CATEGORY_DEPTH } from "@/lib/tree";
 import { AddCategoryForm } from "@/components/level-form";
 import { ItemForm } from "@/components/item-form";
+import { CategoryRow } from "@/components/category-row";
 import { Restructure } from "@/components/restructure";
 
 export default async function CategoryLevel({ params }: { params: Promise<{ id: string }> }) {
@@ -113,24 +117,14 @@ export default async function CategoryLevel({ params }: { params: Promise<{ id: 
                     const total = branchIds(nodes, g.id)
                       .reduce((s, cid) => s + counts.itemsIn(cid), 0);
                     return (
-                      <tr key={g.id} className="link">
-                        <td className="code">
-                          <Link href={`/items/categories/${g.id}`} style={{ color: "var(--dr)" }}>
-                            {g.code}
-                          </Link>
-                        </td>
-                        <td className="wrap">
-                          <Link href={`/items/categories/${g.id}`}>{g.name}</Link>
-                          {g.name_my && (
-                            <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{g.name_my}</div>
-                          )}
-                        </td>
-                        <td className="r">{counts.childrenOf(g.id) || ""}</td>
-                        <td className="r">{total || ""}</td>
-                        <td>
-                          <Link href={`/items/categories/${g.id}`} className="btn ghost tiny">Open &rarr;</Link>
-                        </td>
-                      </tr>
+                      <CategoryRow
+                        key={g.id}
+                        category={{ ...g, inside: counts.childrenOf(g.id), total }}
+                        returnTo={returnTo}
+                        updateAction={updateCategory}
+                        deactivateAction={deactivateCategory}
+                        deleteAction={deleteCategory}
+                      />
                     );
                   })}
                 </tbody>

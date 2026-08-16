@@ -1,6 +1,7 @@
 import { sql } from "@/lib/db";
-import { createBrand } from "@/lib/actions";
+import { createBrand, updateBrand, deactivateBrand, deleteBrand } from "@/lib/actions";
 import { AddBrandForm } from "@/components/brand-form";
+import { BrandRow } from "@/components/brand-row";
 import { DataTable, type DataRow } from "@/components/data-table";
 
 export default async function Brands() {
@@ -8,7 +9,7 @@ export default async function Brands() {
   if (!co) return <div className="empty">No company found.</div>;
 
   const brands = (await sql`
-    select b.id, b.code, b.name, b.name_my, count(i.id)::int as items
+    select b.id, b.code, b.name, b.name_my, b.is_active, count(i.id)::int as items
       from brand b
       left join item i on i.brand_id = b.id
      where b.company_id = ${co.id}
@@ -18,18 +19,14 @@ export default async function Brands() {
   const rows: DataRow[] = brands.map((b) => ({
     key: b.id,
     searchText: [b.code, b.name, b.name_my].filter(Boolean).join(" "),
-    sort: { code: b.code, name: b.name, items: Number(b.items) },
+    sort: { code: b.code, name: b.name, items: Number(b.items), is_active: b.is_active ? 1 : 0 },
     node: (
-      <tr>
-        <td className="code">{b.code}</td>
-        <td className="wrap">
-          {b.name}
-          {b.name_my && (
-            <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{b.name_my}</div>
-          )}
-        </td>
-        <td className="r">{b.items || ""}</td>
-      </tr>
+      <BrandRow
+        brand={b}
+        updateAction={updateBrand}
+        deactivateAction={deactivateBrand}
+        deleteAction={deleteBrand}
+      />
     ),
   }));
 
@@ -68,6 +65,8 @@ export default async function Brands() {
                 { key: "code", label: "Code", sortable: true },
                 { key: "name", label: "Name", sortable: true },
                 { key: "items", label: "Items", sortable: true, align: "r" },
+                { key: "is_active", label: "Status", sortable: true },
+                { key: "actions", label: "" },
               ]}
             />
           )}

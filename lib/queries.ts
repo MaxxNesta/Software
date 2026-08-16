@@ -242,8 +242,10 @@ export async function getStock(companyId: string) {
 
 export async function getPartners(companyId: string) {
   return sql`
-    select bp.id, bp.code, bp.name, bp.name_my, bp.is_customer, bp.is_supplier,
-           bp.township, bp.payment_terms_days,
+    select bp.id, bp.code, bp.name, bp.name_my, bp.company_name,
+           bp.is_customer, bp.is_supplier, bp.is_active,
+           bp.township, bp.address, bp.phone,
+           bp.payment_terms_days, bp.credit_limit,
            coalesce(oi.outstanding, 0) as outstanding
       from business_partner bp
       left join (
@@ -256,7 +258,8 @@ export async function getPartners(companyId: string) {
 
 export async function getItems(companyId: string) {
   return sql`
-    select i.id, i.code, i.name, i.name_my, i.item_group_id, i.brand_id, i.is_stocked,
+    select i.id, i.code, i.name, i.name_my, i.item_group_id, i.brand_id,
+           i.base_uom_id, i.is_stocked, i.is_active,
            g.name as group_name, g.parent_id as group_parent_id,
            pg.name as parent_group_name,
            b.name as brand_name,

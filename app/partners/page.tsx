@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { money } from "@/lib/db";
 import { getCompany, getPartners } from "@/lib/queries";
+import { updatePartner, deactivatePartner, deletePartner } from "@/lib/actions";
+import { PartnerRow } from "@/components/partner-row";
 import { DataTable, type DataRow } from "@/components/data-table";
 
 export default async function Partners() {
@@ -19,23 +20,15 @@ export default async function Partners() {
       township: p.township ?? "",
       payment_terms_days: Number(p.payment_terms_days),
       outstanding: Number(p.outstanding),
+      is_active: p.is_active ? 1 : 0,
     },
     node: (
-      <tr>
-        <td className="code">{p.code}</td>
-        <td className="wrap">
-          {p.name}
-          {p.name_my && <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{p.name_my}</div>}
-        </td>
-        <td>
-          {p.is_customer && <span className="pill ok">Customer</span>}
-          {p.is_customer && p.is_supplier && " "}
-          {p.is_supplier && <span className="pill warn">Supplier</span>}
-        </td>
-        <td>{p.township ?? "—"}</td>
-        <td className="r">{p.payment_terms_days}d</td>
-        <td className="r">{Number(p.outstanding) ? money(p.outstanding) : "—"}</td>
-      </tr>
+      <PartnerRow
+        partner={p}
+        updateAction={updatePartner}
+        deactivateAction={deactivatePartner}
+        deleteAction={deletePartner}
+      />
     ),
   }));
 
@@ -71,6 +64,8 @@ export default async function Partners() {
               { key: "township", label: "Township", sortable: true },
               { key: "payment_terms_days", label: "Terms", sortable: true, align: "r" },
               { key: "outstanding", label: "Outstanding", sortable: true, align: "r" },
+              { key: "is_active", label: "Status", sortable: true },
+              { key: "actions", label: "" },
             ]}
           />
         </div>

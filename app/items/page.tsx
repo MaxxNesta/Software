@@ -1,12 +1,15 @@
 import Link from "next/link";
-import { money } from "@/lib/db";
-import { getCompany, getItems } from "@/lib/queries";
+import { sql } from "@/lib/db";
+import { getCompany, getItems, getBrands } from "@/lib/queries";
+import { updateItem, deactivateItem, deleteItem } from "@/lib/actions";
+import { ItemRow } from "@/components/item-row";
 import { DataTable, type DataRow } from "@/components/data-table";
 
 type Row = {
   id: string; code: string; name: string; name_my: string | null;
-  item_group_id: string; group_name: string; parent_group_name: string | null;
-  brand_name: string | null; is_stocked: boolean;
+  item_group_id: string; brand_id: string | null; base_uom_id: string;
+  group_name: string; parent_group_name: string | null;
+  brand_name: string | null; is_stocked: boolean; is_active: boolean;
   uom_code: string; sale_price: string | null;
 };
 
@@ -14,7 +17,13 @@ export default async function Items() {
   const company = await getCompany();
   if (!company) return <div className="empty">No company found.</div>;
 
-  const items = (await getItems(company.id)) as unknown as Row[];
+  const [items, brands, uoms] = await Promise.all([
+    getItems(company.id) as unknown as Promise<Row[]>,
+    getBrands(company.id) as unknown as Promise<{ id: string; code: string; name: string }[]>,
+    sql`select id, code, name from uom where company_id = ${company.id} order by code` as unknown as Promise<
+      { id: string; code: string; name: string }[]
+    >,
+  ]);
 
   const rows: DataRow[] = items.map((i) => ({
     key: i.id,
@@ -27,28 +36,17 @@ export default async function Items() {
       brand_name: i.brand_name ?? "",
       uom_code: i.uom_code,
       sale_price: Number(i.sale_price ?? 0),
+      is_active: i.is_active ? 1 : 0,
     },
     node: (
-      <tr>
-        <td className="code">
-          <Link href={`/items/categories/${i.item_group_id}`} style={{ color: "var(--dr)" }}>
-            {i.code}
-          </Link>
-        </td>
-        <td className="wrap">
-          {i.name}
-          {i.name_my && (
-            <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{i.name_my}</div>
-          )}
-          {!i.is_stocked && <> <span className="pill">service</span></>}
-        </td>
-        <td style={{ color: "var(--muted)" }}>
-          {i.parent_group_name ? `${i.parent_group_name} / ${i.group_name}` : i.group_name}
-        </td>
-        <td style={{ color: "var(--muted)" }}>{i.brand_name ?? "—"}</td>
-        <td className="code">{i.uom_code}</td>
-        <td className="r">{i.sale_price ? money(i.sale_price) : "—"}</td>
-      </tr>
+      <ItemRow
+        item={i}
+        brands={brands}
+        uoms={uoms}
+        updateAction={updateItem}
+        deactivateAction={deactivateItem}
+        deleteAction={deleteItem}
+      />
     ),
   }));
 
@@ -94,6 +92,7 @@ export default async function Items() {
                 { key: "brand_name", label: "Brand", sortable: true },
                 { key: "uom_code", label: "Unit", sortable: true },
                 { key: "sale_price", label: "Sale price", sortable: true, align: "r" },
+                { key: "actions", label: "" },
               ]}
             />
           )}

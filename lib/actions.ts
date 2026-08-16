@@ -127,6 +127,80 @@ export async function createPartner(_prev: unknown, fd: FormData): Promise<Actio
   redirectWithToast("/partners", toastMsg);
 }
 
+export async function updatePartner(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  const toastMsg = "Partner updated";
+  const code = str(fd, "code").toUpperCase();
+
+  try {
+    const co = await companyId();
+    const id = str(fd, "id");
+    const name = str(fd, "name");
+    const isCustomer = fd.get("is_customer") === "on";
+    const isSupplier = fd.get("is_supplier") === "on";
+
+    if (!id) return { error: "Choose a partner" };
+    if (!code) return { error: "Code is required" };
+    if (!name) return { error: "Name is required" };
+    if (!isCustomer && !isSupplier) return { error: "Choose customer, supplier, or both" };
+
+    const dup = await sql`
+      select 1 from business_partner where company_id = ${co} and code = ${code} and id <> ${id}`;
+    if (dup.length) return { error: `Code ${code} is already used` };
+
+    await sql`
+      update business_partner set
+        code = ${code}, name = ${name}, name_my = ${str(fd, "name_my") || null},
+        company_name = ${str(fd, "company_name") || null},
+        is_customer = ${isCustomer}, is_supplier = ${isSupplier},
+        township = ${str(fd, "township") || null}, address = ${str(fd, "address") || null},
+        phone = ${str(fd, "phone") || null}, payment_terms_days = ${num(fd, "payment_terms_days")},
+        credit_limit = ${fd.get("credit_limit") ? num(fd, "credit_limit") : null},
+        is_active = ${fd.get("is_active") === "on"}
+      where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    if (isUniqueViolation(e)) return { error: `Code ${code} is already used` };
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/partners");
+  redirectWithToast("/partners", toastMsg);
+}
+
+/** Deactivates a partner without touching any document already against them. */
+export async function deactivatePartner(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+    const id = str(fd, "id");
+    if (!id) return { error: "Choose a partner" };
+
+    await sql`update business_partner set is_active = false where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/partners");
+  redirectWithToast("/partners", "Partner deactivated");
+}
+
+/** Hard delete only succeeds for a partner with no documents against them. Deactivating is the way to retire one. */
+export async function deletePartner(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+    const id = str(fd, "id");
+    if (!id) return { error: "Choose a partner" };
+
+    await sql`delete from business_partner where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    if (isForeignKeyViolation(e)) {
+      return { error: "This partner has documents against them — deactivate instead of deleting" };
+    }
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/partners");
+  redirectWithToast("/partners", "Partner deleted");
+}
+
 // ------------------------------------------------------ categories & items --
 
 export async function createCategory(_prev: unknown, fd: FormData): Promise<ActionResult> {
@@ -179,6 +253,83 @@ export async function createCategory(_prev: unknown, fd: FormData): Promise<Acti
   revalidatePath("/items/categories");
   revalidatePath("/items/new");
   redirectWithToast(returnTo || "/items/categories", toastMsg);
+}
+
+/**
+ * Name only — not segment, parent, or code. Segment drives this category's
+ * own composed code and every descendant's, and parent is a tree move; both
+ * already have dedicated flows (createCategory's segment at creation time,
+ * moveCategory/insertCategoryAbove for restructuring). This is the quick
+ * "fix a typo" / "retire it" edit, not a restructure.
+ */
+export async function updateCategory(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  const toastMsg = "Category updated";
+  const returnTo = str(fd, "return_to") || "/items/categories";
+  const id = str(fd, "id");
+
+  try {
+    const co = await companyId();
+    const name = str(fd, "name");
+
+    if (!id) return { error: "Choose a category" };
+    if (!name) return { error: "Name is required" };
+
+    await sql`
+      update item_group set
+        name = ${name}, name_my = ${str(fd, "name_my") || null},
+        is_active = ${fd.get("is_active") === "on"}
+      where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/items/categories");
+  revalidatePath(`/items/categories/${id}`);
+  redirectWithToast(returnTo, toastMsg);
+}
+
+/** Deactivates a category without touching any item or sub category already filed under it. */
+export async function deactivateCategory(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  const returnTo = str(fd, "return_to") || "/items/categories";
+  const id = str(fd, "id");
+
+  try {
+    const co = await companyId();
+    if (!id) return { error: "Choose a category" };
+
+    await sql`update item_group set is_active = false where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/items/categories");
+  revalidatePath(`/items/categories/${id}`);
+  redirectWithToast(returnTo, "Category deactivated");
+}
+
+/**
+ * Hard delete only succeeds for a category with nothing filed under it —
+ * no items, no sub categories. Deactivating is the way to retire one that
+ * has history.
+ */
+export async function deleteCategory(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  const returnTo = str(fd, "return_to") || "/items/categories";
+
+  try {
+    const co = await companyId();
+    const id = str(fd, "id");
+    if (!id) return { error: "Choose a category" };
+
+    await sql`delete from item_group where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    if (isForeignKeyViolation(e)) {
+      return { error: "This category has items or sub categories under it — deactivate it instead of deleting" };
+    }
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/items/categories");
+  redirectWithToast(returnTo, "Category deleted");
 }
 
 /**
@@ -355,6 +506,79 @@ export async function createItem(_prev: unknown, fd: FormData): Promise<ActionRe
   redirectWithToast(returnTo || "/items", toastMsg);
 }
 
+/**
+ * Name, brand, unit, stocked/active — not code or category. The code is the
+ * item's identity (composed from the category's own code plus a serial at
+ * creation time); reclassifying it into a different category is a bigger,
+ * rarer operation than this quick edit is for.
+ */
+export async function updateItem(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  const toastMsg = "Item updated";
+
+  try {
+    const co = await companyId();
+    const id = str(fd, "id");
+    const name = str(fd, "name");
+    const uomId = str(fd, "base_uom_id");
+
+    if (!id) return { error: "Choose an item" };
+    if (!name) return { error: "Name is required" };
+    if (!uomId) return { error: "Choose a unit" };
+
+    await sql`
+      update item set
+        name = ${name}, name_my = ${str(fd, "name_my") || null},
+        brand_id = ${str(fd, "brand_id") || null}, base_uom_id = ${uomId},
+        is_stocked = ${fd.get("is_stocked") !== null},
+        is_active = ${fd.get("is_active") === "on"}
+      where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/items");
+  revalidatePath("/items/categories");
+  revalidatePath("/items/stock");
+  redirectWithToast("/items", toastMsg);
+}
+
+/** Deactivates an item without touching any document or stock history against it. */
+export async function deactivateItem(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+    const id = str(fd, "id");
+    if (!id) return { error: "Choose an item" };
+
+    await sql`update item set is_active = false where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/items");
+  revalidatePath("/items/stock");
+  redirectWithToast("/items", "Item deactivated");
+}
+
+/** Hard delete only succeeds for an item nothing has ever touched. Deactivating is the way to retire one. */
+export async function deleteItem(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+    const id = str(fd, "id");
+    if (!id) return { error: "Choose an item" };
+
+    await sql`delete from item where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    if (isForeignKeyViolation(e)) {
+      return { error: "This item has documents or stock history against it — deactivate it instead of deleting" };
+    }
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/items");
+  revalidatePath("/items/stock");
+  redirectWithToast("/items", "Item deleted");
+}
+
 // ------------------------------------------------------------- brands --
 
 export async function createBrand(_prev: unknown, fd: FormData): Promise<ActionResult> {
@@ -383,6 +607,72 @@ export async function createBrand(_prev: unknown, fd: FormData): Promise<ActionR
   revalidatePath("/items/brands");
   revalidatePath("/items/new");
   redirectWithToast("/items/brands", toastMsg);
+}
+
+export async function updateBrand(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  const toastMsg = "Brand updated";
+  const code = str(fd, "code").toUpperCase();
+
+  try {
+    const co = await companyId();
+    const id = str(fd, "id");
+    const name = str(fd, "name");
+
+    if (!id) return { error: "Choose a brand" };
+    if (!code) return { error: "Code is required" };
+    if (!name) return { error: "Name is required" };
+
+    const dup = await sql`
+      select 1 from brand where company_id = ${co} and code = ${code} and id <> ${id}`;
+    if (dup.length) return { error: `Code ${code} is already used` };
+
+    await sql`
+      update brand set
+        code = ${code}, name = ${name}, name_my = ${str(fd, "name_my") || null},
+        is_active = ${fd.get("is_active") === "on"}
+      where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    if (isUniqueViolation(e)) return { error: `Code ${code} is already used` };
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/items/brands");
+  redirectWithToast("/items/brands", toastMsg);
+}
+
+/** Deactivates a brand without touching any item that already uses it. */
+export async function deactivateBrand(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+    const id = str(fd, "id");
+    if (!id) return { error: "Choose a brand" };
+
+    await sql`update brand set is_active = false where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/items/brands");
+  redirectWithToast("/items/brands", "Brand deactivated");
+}
+
+/** Hard delete only succeeds for a brand no item has ever used. Deactivating is the way to retire one. */
+export async function deleteBrand(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+    const id = str(fd, "id");
+    if (!id) return { error: "Choose a brand" };
+
+    await sql`delete from brand where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    if (isForeignKeyViolation(e)) {
+      return { error: "This brand is used by one or more items — deactivate it instead of deleting" };
+    }
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/items/brands");
+  redirectWithToast("/items/brands", "Brand deleted");
 }
 
 export type NewBrandInput = { name: string; nameMy?: string };

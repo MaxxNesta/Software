@@ -1,8 +1,8 @@
-import Link from "next/link";
 import { sql } from "@/lib/db";
-import { createCategory } from "@/lib/actions";
+import { createCategory, updateCategory, deactivateCategory, deleteCategory } from "@/lib/actions";
 import { allCategories, childrenOf, levelCounts, branchIds } from "@/lib/tree";
 import { AddCategoryForm } from "@/components/level-form";
+import { CategoryRow } from "@/components/category-row";
 import { DataTable, type DataRow } from "@/components/data-table";
 
 export default async function CategoriesRoot() {
@@ -20,26 +20,15 @@ export default async function CategoriesRoot() {
   const rows: DataRow[] = roots.map((g) => ({
     key: g.id,
     searchText: [g.code, g.name, g.name_my].filter(Boolean).join(" "),
-    sort: { code: g.code, name: g.name, inside: g.inside, total: g.total },
+    sort: { code: g.code, name: g.name, inside: g.inside, total: g.total, is_active: g.is_active ? 1 : 0 },
     node: (
-      <tr className="link">
-        <td className="code">
-          <Link href={`/items/categories/${g.id}`} style={{ color: "var(--dr)" }}>
-            {g.code}
-          </Link>
-        </td>
-        <td className="wrap">
-          <Link href={`/items/categories/${g.id}`}>{g.name}</Link>
-          {g.name_my && (
-            <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{g.name_my}</div>
-          )}
-        </td>
-        <td className="r">{g.inside || ""}</td>
-        <td className="r">{g.total || ""}</td>
-        <td>
-          <Link href={`/items/categories/${g.id}`} className="btn ghost tiny">Open &rarr;</Link>
-        </td>
-      </tr>
+      <CategoryRow
+        category={g}
+        returnTo="/items/categories"
+        updateAction={updateCategory}
+        deactivateAction={deactivateCategory}
+        deleteAction={deleteCategory}
+      />
     ),
   }));
 
