@@ -219,6 +219,49 @@ export async function getReturnableSales(companyId: string) {
      limit 500`;
 }
 
+/**
+ * Goods receipts a purchase invoice can match against — only the ones
+ * still sitting unresolved in GR/IR clearing (v_grir_balance), each with
+ * its own lines so the invoice form can pre-fill and compare quantities.
+ */
+export async function getOpenGoodsReceipts(companyId: string) {
+  return sql`
+    select d.id, d.doc_no, d.doc_date, d.partner_id,
+           coalesce(json_agg(json_build_object(
+             'itemId', dl.item_id, 'itemCode', i.code, 'itemName', i.name,
+             'qty', dl.base_qty, 'unitPrice', dl.unit_price
+           ) order by dl.line_no), '[]') as lines
+      from document d
+      join v_grir_balance g on g.document_id = d.id and g.company_id = d.company_id
+      join document_line dl on dl.document_id = d.id
+      join item i on i.id = dl.item_id
+     where d.company_id = ${companyId} and d.doc_type = 'GOODS_RECEIPT' and d.status = 'POSTED'
+     group by d.id, d.doc_no, d.doc_date, d.partner_id
+     order by d.doc_date desc, d.doc_no desc
+     limit 200`;
+}
+
+/**
+ * Purchase invoices a goods receipt can match against — the mirror of
+ * getOpenGoodsReceipts, for when the bill arrived before the goods did.
+ */
+export async function getOpenPurchaseInvoices(companyId: string) {
+  return sql`
+    select d.id, d.doc_no, d.doc_date, d.partner_id,
+           coalesce(json_agg(json_build_object(
+             'itemId', dl.item_id, 'itemCode', i.code, 'itemName', i.name,
+             'qty', dl.base_qty, 'unitPrice', dl.unit_price
+           ) order by dl.line_no), '[]') as lines
+      from document d
+      join v_grir_balance g on g.document_id = d.id and g.company_id = d.company_id
+      join document_line dl on dl.document_id = d.id
+      join item i on i.id = dl.item_id
+     where d.company_id = ${companyId} and d.doc_type = 'PURCHASE_INVOICE' and d.status = 'POSTED'
+     group by d.id, d.doc_no, d.doc_date, d.partner_id
+     order by d.doc_date desc, d.doc_no desc
+     limit 200`;
+}
+
 export async function getDocument(id: string) {
   const [doc] = await sql`
     select d.*, p.name as partner_name, p.code as partner_code,

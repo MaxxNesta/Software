@@ -906,6 +906,8 @@ export async function createPurchaseInvoice(_prev: unknown, fd: FormData): Promi
     if (!str(fd, "partner_id")) return { error: "Choose a supplier" };
     if (!str(fd, "location_id")) return { error: "Choose a warehouse" };
 
+    const goodsReceiptId = str(fd, "goods_receipt_id") || null;
+
     const input = {
       companyId: co,
       partnerId: str(fd, "partner_id"),
@@ -919,12 +921,18 @@ export async function createPurchaseInvoice(_prev: unknown, fd: FormData): Promi
       lines,
     };
 
-    // Mirrors to_deliver on the sales side: unchecked means the goods
-    // haven't arrived yet, so only the GR/IR-clearing side of the bill
-    // posts, and a receipt clears it later. Checked (the default) receives
-    // and bills in the same breath.
-    const receivedNow = fd.get("received_now") !== null;
-    const result = receivedNow ? await postPurchaseWithReceipt(input) : await postPurchaseInvoice(input);
+    // Three ways this can go: matched to a receipt that already exists (the
+    // goods are already in the warehouse, so nothing should create a second
+    // one); received now (composes a fresh receipt in the same breath); or
+    // deferred (only the GR/IR-clearing side posts, a receipt clears it
+    // later). "Received now" and "match an existing receipt" are mutually
+    // exclusive — the form only shows one at a time.
+    const receivedNow = !goodsReceiptId && fd.get("received_now") !== null;
+    const result = goodsReceiptId
+      ? await postPurchaseInvoice({ ...input, goodsReceiptId })
+      : receivedNow
+        ? await postPurchaseWithReceipt(input)
+        : await postPurchaseInvoice(input);
 
     docId = result.id;
     toastMsg = `Invoice ${result.docNo} posted`;

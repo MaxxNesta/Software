@@ -1,4 +1,5 @@
 import { getFormData, createGoodsReceipt } from "@/lib/actions";
+import { getOpenPurchaseInvoices } from "@/lib/queries";
 import { allCategories } from "@/lib/tree";
 import { sql } from "@/lib/db";
 import { ReceiptForm } from "@/components/receipt-form";
@@ -7,6 +8,7 @@ export default async function NewGoodsReceipt() {
   const d = await getFormData();
   const [co] = await sql`select id from company order by created_at limit 1`;
   const categories = await allCategories(co.id);
+  const purchaseInvoices = await getOpenPurchaseInvoices(co.id);
   const today = new Date().toISOString().slice(0, 10);
 
   if (d.suppliers.length === 0 || categories.length === 0 || d.locations.length === 0) {
@@ -45,6 +47,7 @@ export default async function NewGoodsReceipt() {
         categories={categories}
         uoms={d.uoms as never}
         today={today}
+        purchaseInvoices={purchaseInvoices as never}
       />
     </>
   );

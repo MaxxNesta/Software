@@ -1,4 +1,5 @@
 import { getFormData, createPurchaseInvoice } from "@/lib/actions";
+import { getOpenGoodsReceipts } from "@/lib/queries";
 import { allCategories } from "@/lib/tree";
 import { sql } from "@/lib/db";
 import { InvoiceForm } from "@/components/invoice-form";
@@ -7,6 +8,7 @@ export default async function NewPurchaseInvoice() {
   const { suppliers, items, locations, uoms, cashAccounts } = await getFormData();
   const [co] = await sql`select id from company order by created_at limit 1`;
   const categories = await allCategories(co.id);
+  const goodsReceipts = await getOpenGoodsReceipts(co.id);
   const today = new Date().toISOString().slice(0, 10);
 
   // Items are deliberately not required: a product can be created from the
@@ -37,8 +39,8 @@ export default async function NewPurchaseInvoice() {
         <span className="eyebrow">Purchases</span>
         <h1>New purchase invoice</h1>
         <span className="page-sub">
-          Stock arrives at the price paid and the supplier balance opens. The
-          moving-average cost of each item is recalculated from this receipt.
+          Stock arrives at the price paid and the supplier balance opens. Each
+          receipt becomes its own FIFO cost layer.
         </span>
       </div>
 
@@ -52,6 +54,7 @@ export default async function NewPurchaseInvoice() {
         uoms={uoms as never}
         today={today}
         cashAccounts={cashAccounts as never}
+        goodsReceipts={goodsReceipts as never}
       />
     </>
   );

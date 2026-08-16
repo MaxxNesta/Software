@@ -9,6 +9,8 @@ type Node = { id: string; code: string; segment: string; name: string; parent_id
 type Partner = { id: string; code: string; name: string };
 type Location = { id: string; code: string; name: string };
 type Line = { key: number; itemId: string; qty: string; unitCost: string };
+type MatchLine = { itemId: string; itemCode: string; itemName: string; qty: number; unitPrice: number };
+type OpenDoc = { id: string; doc_no: string; doc_date: string; partner_id: string; lines: MatchLine[] };
 
 const fmt = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 
@@ -26,6 +28,7 @@ export function ReceiptForm({
   today,
   categories,
   uoms,
+  purchaseInvoices,
 }: {
   action: (prev: unknown, fd: FormData) => Promise<ActionResult>;
   suppliers: Partner[];
@@ -34,6 +37,8 @@ export function ReceiptForm({
   today: string;
   categories: Node[];
   uoms: { id: string; code: string; name: string }[];
+  /** Open (unmatched) purchase invoices this receipt can match against — the bill arrived first. */
+  purchaseInvoices?: OpenDoc[];
 }) {
   const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
     action as never,
@@ -47,6 +52,7 @@ export function ReceiptForm({
   const [partnerId, setPartnerId] = useState("");
   const [docDate, setDocDate] = useState(today);
   const [receivedTime, setReceivedTime] = useState("");
+  const [matchedPiId, setMatchedPiId] = useState("");
 
   // Set client-side, after mount, so the server-rendered markup and the
   // first client render match — "now" would differ between the two.
@@ -55,6 +61,22 @@ export function ReceiptForm({
   }, []);
 
   const byId = (id: string) => items.find((i) => i.id === id);
+  const openInvoices = (purchaseInvoices ?? []).filter((d) => d.partner_id === partnerId);
+  const matchedPi = openInvoices.find((d) => d.id === matchedPiId) ?? null;
+
+  function matchInvoice(id: string) {
+    setMatchedPiId(id);
+    const pi = openInvoices.find((d) => d.id === id);
+    if (!pi) return;
+    setLines(
+      pi.lines.map((l, idx) => ({
+        key: idx + 1,
+        itemId: l.itemId,
+        qty: String(l.qty),
+        unitCost: String(l.unitPrice),
+      }))
+    );
+  }
 
   function setLine(key: number, patch: Partial<Line>) {
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -74,6 +96,13 @@ export function ReceiptForm({
 
   const amount = (l: Line) => (Number(l.qty) || 0) * (Number(l.unitCost) || 0);
   const total = lines.reduce((s, l) => s + amount(l), 0);
+
+  const qtyMismatches = matchedPi
+    ? lines.filter((l) => {
+        const billedLine = matchedPi.lines.find((pl) => pl.itemId === l.itemId);
+        return billedLine && Number(l.qty) !== billedLine.qty;
+      })
+    : [];
 
   const payload = JSON.stringify(
     lines
@@ -96,7 +125,7 @@ export function ReceiptForm({
             <div className="field">
               <label htmlFor="partner_id">Supplier</label>
               <select id="partner_id" name="partner_id" value={partnerId}
-                onChange={(e) => setPartnerId(e.target.value)} required>
+                onChange={(e) => { setPartnerId(e.target.value); setMatchedPiId(""); }} required>
                 <option value="">Choose…</option>
                 {suppliers.map((p) => (
                   <option key={p.id} value={p.id}>{p.code} · {p.name}</option>
@@ -136,6 +165,33 @@ export function ReceiptForm({
 
       <div className="card">
         <div className="card-head">
+          <h2>Matching</h2>
+        </div>
+        <div className="card-body">
+          <div className="field">
+            <label htmlFor="source_document_id">Match existing supplier invoice</label>
+            <select id="source_document_id" name="source_document_id" value={matchedPiId}
+              onChange={(e) => matchInvoice(e.target.value)} disabled={!partnerId}>
+              <option value="">
+                {partnerId ? "Not matched — no invoice waiting for these goods" : "Choose a supplier first"}
+              </option>
+              {openInvoices.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.doc_no} · {String(d.doc_date).slice(0, 10)} · {d.lines.length} line{d.lines.length === 1 ? "" : "s"}
+                </option>
+              ))}
+            </select>
+            <span className="hint">
+              {matchedPi
+                ? "Lines are filled from that invoice — check what actually arrived before posting."
+                : "The supplier already billed for this and it's just sitting in GR/IR clearing — pick which invoice these goods are for."}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head">
           <h2>Lines</h2>
           <button type="button" className="ghost tiny" onClick={addLine}>Add line</button>
         </div>
@@ -144,13 +200,17 @@ export function ReceiptForm({
           <table className="linetable">
             <thead>
               <tr>
-                <th>Item</th><th className="r">Qty</th><th className="r">Unit cost</th>
+                <th>Item</th>
+                {matchedPi && <th className="r">Billed</th>}
+                <th className="r">Qty</th><th className="r">Unit cost</th>
                 <th className="r">Value</th><th />
               </tr>
             </thead>
             <tbody>
               {lines.map((l) => {
                 const item = byId(l.itemId);
+                const billedLine = matchedPi?.lines.find((pl) => pl.itemId === l.itemId);
+                const qtyMismatch = matchedPi && billedLine && Number(l.qty) !== billedLine.qty;
                 return (
                   <tr key={l.key}>
                     <td style={{ minWidth: 240 }}>
@@ -164,10 +224,16 @@ export function ReceiptForm({
                         onCreated={addItem}
                       />
                     </td>
+                    {matchedPi && (
+                      <td className="r" style={{ color: qtyMismatch ? "var(--warn)" : undefined }}>
+                        {billedLine ? fmt(billedLine.qty) : "—"}
+                      </td>
+                    )}
                     <td className="narrow">
                       <input type="number" min="0" step="any" value={l.qty}
                         onChange={(e) => setLine(l.key, { qty: e.target.value })}
-                        aria-label="Quantity" />
+                        aria-label="Quantity"
+                        style={qtyMismatch ? { borderColor: "var(--warn)" } : undefined} />
                     </td>
                     <td className="narrow">
                       <input type="number" min="0" step="any" value={l.unitCost}
@@ -191,6 +257,14 @@ export function ReceiptForm({
           <span className="big">{fmt(total)} MMK</span>
         </div>
       </div>
+
+      {qtyMismatches.length > 0 && (
+        <div className="alert" style={{ borderColor: "var(--warn)", color: "var(--warn)", background: "color-mix(in srgb, var(--warn) 8%, transparent)" }}>
+          Received quantity doesn&rsquo;t match what {matchedPi?.doc_no} billed for{" "}
+          {qtyMismatches.map((l) => byId(l.itemId)?.code ?? matchedPi?.lines.find((pl) => pl.itemId === l.itemId)?.itemCode).join(", ")}.
+          Not blocked — a short shipment can be legitimate — but check before posting.
+        </div>
+      )}
 
       <div className="field">
         <label htmlFor="memo">Note</label>

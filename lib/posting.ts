@@ -733,8 +733,32 @@ async function _postGoodsReceipt(tx: TransactionSql, input: FulfillmentInput) {
     journal.push({ accountId: inventory[0].a, amount: net, locationId });
   }
 
+  // Matched to an invoice that already arrived: the GR/IR line clears
+  // against what that invoice already posted, not this receipt's own value
+  // — the mirror image of how a purchase invoice matches an existing
+  // receipt. Any difference is the same Purchase Price Variance account
+  // either direction uses; the variance is a property of the pair, not of
+  // whichever document happens to post second.
+  let grirAmount = netTotal;
+  if (input.sourceDocumentId) {
+    const [src] = await tx`
+      select doc_type from document where id = ${input.sourceDocumentId} and company_id = ${companyId}`;
+    if (src?.doc_type === "PURCHASE_INVOICE") {
+      const [pi] = await tx`
+        select coalesce(sum(net_amount), 0) as total from document_line
+         where document_id = ${input.sourceDocumentId}`;
+      const invoicedValue = round4(Number(pi.total));
+      const variance = round4(netTotal - invoicedValue);
+      if (variance !== 0) {
+        const pv = await tx`select fn_system_account(${companyId}, 'PURCHASE_PRICE_VARIANCE') as a`;
+        journal.push({ accountId: pv[0].a, amount: -variance, locationId });
+      }
+      grirAmount = invoicedValue;
+    }
+  }
+
   const grir = await tx`select fn_system_account(${companyId}, 'GRIR_CLEARING') as a`;
-  journal.push({ accountId: grir[0].a, amount: -netTotal, partnerId });
+  journal.push({ accountId: grir[0].a, amount: -grirAmount, partnerId });
 
   const entryId = await writeJournal(
     tx, companyId, docDate, "GOODS_RECEIPT", doc.id, `${docNo} goods receipt`, journal

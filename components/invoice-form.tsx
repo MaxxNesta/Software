@@ -10,6 +10,8 @@ type Node = { id: string; code: string; segment: string; name: string; parent_id
 type Partner = { id: string; code: string; name: string; payment_terms_days: number };
 type Location = { id: string; code: string; name: string };
 type CashAccount = { id: string; code: string; name: string };
+type MatchLine = { itemId: string; itemCode: string; itemName: string; qty: number; unitPrice: number };
+type OpenDoc = { id: string; doc_no: string; doc_date: string; partner_id: string; lines: MatchLine[] };
 
 type Line = { key: number; itemId: string; qty: string; unitPrice: string };
 
@@ -31,6 +33,7 @@ export function InvoiceForm({
   categories,
   uoms,
   cashAccounts,
+  goodsReceipts,
 }: {
   kind: "sales" | "purchase";
   action: (prev: unknown, fd: FormData) => Promise<ActionResult>;
@@ -41,6 +44,8 @@ export function InvoiceForm({
   categories: Node[];
   uoms: { id: string; code: string; name: string }[];
   cashAccounts?: CashAccount[];
+  /** Open (unmatched) goods receipts this invoice can match against — purchase only. */
+  goodsReceipts?: OpenDoc[];
 }) {
   const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
     action as never,
@@ -56,9 +61,26 @@ export function InvoiceForm({
   const [dueDate, setDueDate] = useState("");
   const [cashOut, setCashOut] = useState("");
   const [cashAccountId, setCashAccountId] = useState("");
+  const [matchedGrId, setMatchedGrId] = useState("");
 
   const isSales = kind === "sales";
   const byId = (id: string) => items.find((i) => i.id === id);
+  const openReceipts = (goodsReceipts ?? []).filter((d) => d.partner_id === partnerId);
+  const matchedGr = openReceipts.find((d) => d.id === matchedGrId) ?? null;
+
+  function matchGoodsReceipt(id: string) {
+    setMatchedGrId(id);
+    const gr = openReceipts.find((d) => d.id === id);
+    if (!gr) return;
+    setLines(
+      gr.lines.map((l, idx) => ({
+        key: idx + 1,
+        itemId: l.itemId,
+        qty: String(l.qty),
+        unitPrice: String(l.unitPrice),
+      }))
+    );
+  }
 
   function setLine(key: number, patch: Partial<Line>) {
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -72,6 +94,7 @@ export function InvoiceForm({
 
   function pickPartner(id: string) {
     setPartnerId(id);
+    setMatchedGrId("");
     const p = partners.find((x) => x.id === id);
     if (p && p.payment_terms_days > 0) setDueDate(addDays(docDate, p.payment_terms_days));
   }
@@ -97,6 +120,13 @@ export function InvoiceForm({
     const item = byId(l.itemId);
     return item?.is_stocked && Number(l.qty) > Number(item.on_hand);
   });
+
+  const qtyMismatches = matchedGr
+    ? lines.filter((l) => {
+        const receivedLine = matchedGr.lines.find((gl) => gl.itemId === l.itemId);
+        return receivedLine && Number(l.qty) !== receivedLine.qty;
+      })
+    : [];
 
   const cashOverpaid = !isSales && Number(cashOut) > total;
 
@@ -168,6 +198,35 @@ export function InvoiceForm({
         </div>
       </div>
 
+      {!isSales && (
+        <div className="card">
+          <div className="card-head">
+            <h2>Matching</h2>
+          </div>
+          <div className="card-body">
+            <div className="field">
+              <label htmlFor="goods_receipt_id">Match existing goods receipt</label>
+              <select id="goods_receipt_id" name="goods_receipt_id" value={matchedGrId}
+                onChange={(e) => matchGoodsReceipt(e.target.value)} disabled={!partnerId}>
+                <option value="">
+                  {partnerId ? "Not matched — new receipt or bill first" : "Choose a supplier first"}
+                </option>
+                {openReceipts.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.doc_no} · {String(d.doc_date).slice(0, 10)} · {d.lines.length} line{d.lines.length === 1 ? "" : "s"}
+                  </option>
+                ))}
+              </select>
+              <span className="hint">
+                {matchedGr
+                  ? "Lines are filled from this receipt — check quantities and prices against the actual bill before posting."
+                  : "The goods are already in the warehouse and just need their bill recorded — pick which receipt this invoice is for."}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="card">
         <div className="card-head">
           <h2>Lines</h2>
@@ -182,6 +241,7 @@ export function InvoiceForm({
               <tr>
                 <th>Item</th>
                 <th className="r">{isSales ? "On hand" : "Next cost"}</th>
+                {matchedGr && <th className="r">Received</th>}
                 <th className="r">Qty</th>
                 <th className="r">Unit price</th>
                 <th className="r">Amount</th>
@@ -192,6 +252,8 @@ export function InvoiceForm({
               {lines.map((l) => {
                 const item = byId(l.itemId);
                 const short = isSales && item?.is_stocked && Number(l.qty) > Number(item.on_hand);
+                const receivedLine = matchedGr?.lines.find((gl) => gl.itemId === l.itemId);
+                const qtyMismatch = matchedGr && receivedLine && Number(l.qty) !== receivedLine.qty;
 
                 return (
                   <tr key={l.key}>
@@ -217,6 +279,11 @@ export function InvoiceForm({
                         fmt(Number(item.next_cost))
                       )}
                     </td>
+                    {matchedGr && (
+                      <td className="r" style={{ color: qtyMismatch ? "var(--warn)" : undefined }}>
+                        {receivedLine ? fmt(receivedLine.qty) : "—"}
+                      </td>
+                    )}
                     <td className="narrow">
                       <input
                         type="number"
@@ -225,6 +292,7 @@ export function InvoiceForm({
                         value={l.qty}
                         onChange={(e) => setLine(l.key, { qty: e.target.value })}
                         aria-label="Quantity"
+                        style={qtyMismatch ? { borderColor: "var(--warn)" } : undefined}
                       />
                     </td>
                     <td className="narrow">
@@ -270,7 +338,15 @@ export function InvoiceForm({
         </div>
       )}
 
-      {!isSales && (
+      {qtyMismatches.length > 0 && (
+        <div className="alert" style={{ borderColor: "var(--warn)", color: "var(--warn)", background: "color-mix(in srgb, var(--warn) 8%, transparent)" }}>
+          Billed quantity doesn&rsquo;t match what {matchedGr?.doc_no} recorded as received for{" "}
+          {qtyMismatches.map((l) => byId(l.itemId)?.code ?? matchedGr?.lines.find((gl) => gl.itemId === l.itemId)?.itemCode).join(", ")}.
+          Not blocked — a partial delivery or short shipment can be legitimate — but check before posting.
+        </div>
+      )}
+
+      {!isSales && !matchedGrId && (
         <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem", marginTop: "0.5rem" }}>
           <label className="check" htmlFor="received_now">
             <input id="received_now" name="received_now" type="checkbox" defaultChecked />
