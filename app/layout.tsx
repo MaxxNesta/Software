@@ -6,7 +6,7 @@ import { getCompany } from "@/lib/queries";
 import { NavLink, NavGroup } from "./nav";
 import { Toast } from "@/components/toast";
 import {
-  LayoutDashboard, ShoppingCart, Package, Wallet, BookOpen, Boxes, Database, Settings as SettingsIcon,
+  LayoutDashboard, ShoppingCart, Package, Wallet, BookOpen, Boxes, Database,
 } from "lucide-react";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
@@ -93,23 +93,25 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <NavLink href="/finance/cash-flow">Cash flow</NavLink>
             </NavGroup>
 
-            <NavGroup label="Inventory" icon={<Boxes size={14} />} match={["/items/stock", "/inventory", "/warehouses"]}>
+            <NavGroup label="Inventory" icon={<Boxes size={14} />} match={["/items/stock", "/inventory"]}>
               <NavLink href="/items/stock">Stock overview</NavLink>
               <NavLink href="/inventory/movements">Stock movements</NavLink>
               <NavLink href="/inventory/adjustments">Adjustments</NavLink>
-              <NavLink href="/warehouses">Warehouses</NavLink>
             </NavGroup>
 
-            <NavGroup label="Master data" icon={<Database size={14} />} match={["/items/categories", "/items/subcategories", "/items", "/partners", "/salespersons"]}>
-              <NavLink href="/items/categories">Categories</NavLink>
-              <NavLink href="/items/subcategories">Sub category</NavLink>
+            <NavGroup label="Master data" icon={<Database size={14} />} match={[
+              "/partners", "/items", "/warehouses", "/salespersons", "/settings",
+            ]}>
+              <NavLink href="/partners" exact clearParams={["role"]}>Partners</NavLink>
+              <NavLink href="/partners?role=customer" sub>Customers</NavLink>
+              <NavLink href="/partners?role=supplier" sub>Suppliers</NavLink>
               <NavLink href="/items" exact>Items</NavLink>
-              <NavLink href="/partners">Partners</NavLink>
+              <NavLink href="/items/categories">Categories</NavLink>
+              <NavLink href="/items/subcategories">Sub Categories</NavLink>
+              <NavLink href="/items/brands">Brands</NavLink>
+              <NavLink href="/warehouses">Warehouses</NavLink>
               <NavLink href="/salespersons">Salespersons</NavLink>
-            </NavGroup>
-
-            <NavGroup label="Settings" icon={<SettingsIcon size={14} />} match={["/settings"]}>
-              <NavLink href="/settings/accounts">Chart of accounts</NavLink>
+              <NavLink href="/settings/accounts">Chart of Accounts</NavLink>
             </NavGroup>
 
           </nav>

@@ -4,11 +4,24 @@ import { updatePartner, deactivatePartner, deletePartner } from "@/lib/actions";
 import { PartnerRow } from "@/components/partner-row";
 import { DataTable, type DataRow } from "@/components/data-table";
 
-export default async function Partners() {
+export default async function Partners({
+  searchParams,
+}: {
+  searchParams: Promise<{ role?: string }>;
+}) {
   const company = await getCompany();
   if (!company) return <div className="empty">No company found.</div>;
 
-  const partners = (await getPartners(company.id)) as any[];
+  const { role } = await searchParams;
+  const all = (await getPartners(company.id)) as any[];
+
+  // Customers and Suppliers in the nav are filtered views of this same
+  // table, not separate lists — the same company is routinely both, and
+  // splitting the data would mean reconciling one partner against itself.
+  const partners =
+    role === "customer" ? all.filter((p) => p.is_customer)
+    : role === "supplier" ? all.filter((p) => p.is_supplier)
+    : all;
 
   const rows: DataRow[] = partners.map((p) => ({
     key: p.id,
@@ -36,17 +49,18 @@ export default async function Partners() {
     <>
       <div className="page-head">
         <span className="eyebrow">Master data</span>
-        <h1>Business partners</h1>
+        <h1>{role === "customer" ? "Customers" : role === "supplier" ? "Suppliers" : "Business partners"}</h1>
         <span className="page-sub">
-          One table with roles rather than separate customer and supplier lists —
-          here the same company is routinely both.
+          {role
+            ? "A filtered view of the same partner table — one record can be both a customer and a supplier."
+            : "One table with roles rather than separate customer and supplier lists — here the same company is routinely both."}
         </span>
       </div>
 
       <section>
         <div className="card">
           <div className="card-head">
-            <h2>Partners</h2>
+            <h2>{role === "customer" ? "Customers" : role === "supplier" ? "Suppliers" : "Partners"}</h2>
             <span className="actions">
               <span className="page-sub">{partners.length} records</span>
               <Link href="/partners/new" className="btn">New partner</Link>
