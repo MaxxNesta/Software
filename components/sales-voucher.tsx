@@ -415,16 +415,29 @@ export function SalesVoucher({
               </div>
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem", marginTop: "1rem" }}>
-              <label className="check" htmlFor="to_deliver">
-                <input id="to_deliver" name="to_deliver" type="checkbox"
-                  checked={toDeliver} onChange={(e) => setToDeliver(e.target.checked)} />
-                To deliver — goods leave later
-              </label>
-              <span className="hint">
-                Checked: this posts revenue only, and stock leaves later from{" "}
-                Sales → Deliveries. Unchecked: delivery and invoice post together, now.
-              </span>
+            <div style={{ marginTop: "1rem" }}>
+              <label style={{ display: "block", marginBottom: "0.5rem" }}>Fulfilment</label>
+              <div className="row">
+                <label className="check" style={{ alignItems: "flex-start" }}>
+                  <input type="radio" name="fulfilment" checked={!toDeliver}
+                    onChange={() => setToDeliver(false)} style={{ marginTop: "0.2rem" }} />
+                  <span>
+                    <div>Take now</div>
+                    <span className="hint">Goods leave immediately — delivery and invoice post together</span>
+                  </span>
+                </label>
+                <label className="check" style={{ alignItems: "flex-start" }}>
+                  <input type="radio" name="fulfilment" checked={toDeliver}
+                    onChange={() => setToDeliver(true)} style={{ marginTop: "0.2rem" }} />
+                  <span>
+                    <div>Deliver later</div>
+                    <span className="hint">
+                      Revenue posts now; stock leaves later from Sales → Deliveries
+                    </span>
+                  </span>
+                </label>
+              </div>
+              {toDeliver && <input type="hidden" name="to_deliver" value="on" />}
             </div>
 
             <div className="totalbar" style={{ marginTop: "0.5rem", paddingRight: 0 }}>
