@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { sql } from "@/lib/db";
 import { allCategories, subcategories, levelCounts, branchIds } from "@/lib/tree";
+import { updateCategory, deactivateCategory, deleteCategory } from "@/lib/actions";
+import { CategoryRow } from "@/components/category-row";
+import { DataTable, type DataRow } from "@/components/data-table";
 
 export default async function Subcategories() {
   const [co] = await sql`select id from company order by created_at limit 1`;
@@ -8,7 +11,31 @@ export default async function Subcategories() {
 
   const nodes = await allCategories(co.id);
   const counts = await levelCounts(co.id);
-  const subs = subcategories(nodes);
+  const subs = subcategories(nodes).map((s) => ({
+    ...s,
+    parentName: nodes.find((n) => n.id === s.parent_id)?.name ?? null,
+    inside: counts.childrenOf(s.id),
+    total: branchIds(nodes, s.id).reduce((sum, id) => sum + counts.itemsIn(id), 0),
+  }));
+
+  const rows: DataRow[] = subs.map((s) => ({
+    key: s.id,
+    searchText: [s.code, s.name, s.name_my, s.parentName].filter(Boolean).join(" "),
+    sort: {
+      code: s.code, name: s.name, parentName: s.parentName ?? "",
+      inside: s.inside, total: s.total, is_active: s.is_active ? 1 : 0,
+    },
+    node: (
+      <CategoryRow
+        category={s}
+        parentName={s.parentName}
+        returnTo="/items/subcategories"
+        updateAction={updateCategory}
+        deactivateAction={deactivateCategory}
+        deleteAction={deleteCategory}
+      />
+    ),
+  }));
 
   return (
     <>
@@ -35,45 +62,20 @@ export default async function Subcategories() {
               <Link href="/items/categories" style={{ color: "var(--dr)" }}>Go to categories</Link>
             </div>
           ) : (
-            <div className="tablewrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Code</th><th>Name</th><th>Category</th>
-                    <th className="r">Items</th><th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {subs.map((s) => {
-                    const parent = nodes.find((n) => n.id === s.parent_id);
-                    const total = branchIds(nodes, s.id)
-                      .reduce((sum, id) => sum + counts.itemsIn(id), 0);
-                    return (
-                      <tr key={s.id} className="link">
-                        <td className="code">
-                          <Link href={`/items/categories/${s.id}`} style={{ color: "var(--dr)" }}>
-                            {s.code}
-                          </Link>
-                        </td>
-                        <td className="wrap">
-                          <Link href={`/items/categories/${s.id}`}>{s.name}</Link>
-                          {s.name_my && (
-                            <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{s.name_my}</div>
-                          )}
-                        </td>
-                        <td className="wrap" style={{ color: "var(--muted)" }}>
-                          {parent?.name ?? "—"}
-                        </td>
-                        <td className="r">{total || ""}</td>
-                        <td>
-                          <Link href={`/items/categories/${s.id}`} className="btn ghost tiny">Open &rarr;</Link>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              rows={rows}
+              emptyLabel="No sub categories"
+              searchPlaceholder="Search sub categories…"
+              defaultSort={{ key: "code", dir: "asc" }}
+              columns={[
+                { key: "code", label: "Code", sortable: true },
+                { key: "name", label: "Name", sortable: true },
+                { key: "parentName", label: "Category", sortable: true },
+                { key: "inside", label: "Inside", sortable: true, align: "r" },
+                { key: "total", label: "Items", sortable: true, align: "r" },
+                { key: "actions", label: "" },
+              ]}
+            />
           )}
         </div>
       </section>

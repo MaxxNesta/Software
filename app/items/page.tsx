@@ -32,7 +32,8 @@ export default async function Items() {
     sort: {
       code: i.code,
       name: i.name,
-      group_name: i.parent_group_name ? `${i.parent_group_name} / ${i.group_name}` : i.group_name,
+      category: i.parent_group_name ?? i.group_name,
+      subcategory: i.parent_group_name ? i.group_name : "",
       brand_name: i.brand_name ?? "",
       uom_code: i.uom_code,
       sale_price: Number(i.sale_price ?? 0),
@@ -88,7 +89,8 @@ export default async function Items() {
               columns={[
                 { key: "code", label: "Code", sortable: true },
                 { key: "name", label: "Name", sortable: true },
-                { key: "group_name", label: "Category", sortable: true },
+                { key: "category", label: "Category", sortable: true },
+                { key: "subcategory", label: "Sub category", sortable: true },
                 { key: "brand_name", label: "Brand", sortable: true },
                 { key: "uom_code", label: "Unit", sortable: true },
                 { key: "sale_price", label: "Sale price", sortable: true, align: "r" },

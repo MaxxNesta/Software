@@ -54,7 +54,7 @@ export function ItemRow({
   if (editing) {
     return (
       <tr>
-        <td colSpan={7}>
+        <td colSpan={8}>
           <form action={formAction} className="form" style={{ padding: "0.5rem 0" }}>
             {state && "error" in state && <div className="alert">{state.error}</div>}
             <input type="hidden" name="id" value={item.id} />
@@ -122,7 +122,10 @@ export function ItemRow({
         {!item.is_active && <> <span className="pill warn">inactive</span></>}
       </td>
       <td style={{ color: "var(--muted)" }}>
-        {item.parent_group_name ? `${item.parent_group_name} / ${item.group_name}` : item.group_name}
+        {item.parent_group_name ?? item.group_name}
+      </td>
+      <td style={{ color: "var(--muted)" }}>
+        {item.parent_group_name ? item.group_name : "—"}
       </td>
       <td style={{ color: "var(--muted)" }}>{item.brand_name ?? "—"}</td>
       <td className="code">{item.uom_code}</td>

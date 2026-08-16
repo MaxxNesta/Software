@@ -9,17 +9,22 @@ type Category = {
   is_active: boolean; inside: number; total: number;
 };
 
-/** Reused on the root categories page and on each category's own child
- *  listing — both show the same shape (a category with what's inside it). */
+/** Reused on the root categories page, each category's own child listing,
+ *  and the flat sub-categories list — all show the same shape (a category
+ *  with what's inside it); the sub-categories list additionally passes
+ *  parentName, since that flat list mixes children of many categories. */
 export function CategoryRow({
   category,
   returnTo,
+  parentName,
   updateAction,
   deleteAction,
   deactivateAction,
 }: {
   category: Category;
   returnTo: string;
+  /** Shown as its own column when set — the parent category, for a flat list spanning many parents. */
+  parentName?: string | null;
   updateAction: (prev: unknown, fd: FormData) => Promise<ActionResult>;
   deleteAction: (prev: unknown, fd: FormData) => Promise<ActionResult>;
   deactivateAction: (prev: unknown, fd: FormData) => Promise<ActionResult>;
@@ -45,7 +50,7 @@ export function CategoryRow({
   if (editing) {
     return (
       <tr>
-        <td colSpan={5}>
+        <td colSpan={parentName !== undefined ? 6 : 5}>
           <form action={formAction} className="form" style={{ padding: "0.5rem 0" }}>
             {state && "error" in state && <div className="alert">{state.error}</div>}
             <input type="hidden" name="id" value={category.id} />
@@ -91,6 +96,9 @@ export function CategoryRow({
         )}
         {!category.is_active && <> <span className="pill warn">inactive</span></>}
       </td>
+      {parentName !== undefined && (
+        <td className="wrap" style={{ color: "var(--muted)" }}>{parentName ?? "—"}</td>
+      )}
       <td className="r">{category.inside || ""}</td>
       <td className="r">{category.total || ""}</td>
       <td>
