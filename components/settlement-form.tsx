@@ -210,7 +210,7 @@ export function SettlementForm({
 
       <div className="field">
         <label htmlFor="memo">Note</label>
-        <input id="memo" name="memo" type="text" placeholder="Optional — English or Myanmar" />
+        <textarea id="memo" name="memo" rows={2} placeholder="Optional — English or Myanmar" />
       </div>
 
       <div className="actions">

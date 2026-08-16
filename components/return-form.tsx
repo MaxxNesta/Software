@@ -260,7 +260,7 @@ export function ReturnForm({
 
       <div className="field">
         <label htmlFor="memo">Note</label>
-        <input id="memo" name="memo" type="text" placeholder="Reason for the return — English or Myanmar" />
+        <textarea id="memo" name="memo" rows={2} placeholder="Reason for the return — English or Myanmar" />
       </div>
 
       <div className="actions">

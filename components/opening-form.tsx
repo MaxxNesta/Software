@@ -74,7 +74,7 @@ export function OpeningForm({
         </div>
         <div className="field">
           <label htmlFor="memo">Description</label>
-          <input id="memo" name="memo" type="text" defaultValue="Opening balances" />
+          <textarea id="memo" name="memo" rows={2} defaultValue="Opening balances" />
           <span className="hint">English or Myanmar</span>
         </div>
       </div>

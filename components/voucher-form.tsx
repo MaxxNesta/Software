@@ -272,7 +272,7 @@ export function VoucherForm({
 
       <div className="field">
         <label htmlFor="memo">Description</label>
-        <input id="memo" name="memo" type="text" placeholder="What this voucher is for — English or Myanmar" />
+        <textarea id="memo" name="memo" rows={2} placeholder="What this voucher is for — English or Myanmar" />
       </div>
 
       <div className="actions">

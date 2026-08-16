@@ -212,7 +212,7 @@ export function AdjustmentForm({
 
       <div className="field">
         <label htmlFor="memo">Note</label>
-        <input id="memo" name="memo" type="text" placeholder="What this correction is for — English or Myanmar" />
+        <textarea id="memo" name="memo" rows={2} placeholder="What this correction is for — English or Myanmar" />
       </div>
 
       <div className="actions">
