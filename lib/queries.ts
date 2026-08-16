@@ -224,6 +224,20 @@ export async function getReturnableSales(companyId: string) {
  * still sitting unresolved in GR/IR clearing (v_grir_balance), each with
  * its own lines so the invoice form can pre-fill and compare quantities.
  */
+/**
+ * Whether this specific document still has an outstanding GR/IR clearing
+ * balance — the only documents "create the matching invoice/receipt" should
+ * ever offer. Documents predating this clearing-account pattern (an old
+ * purchase invoice that posted straight to Inventory instead of GR/IR
+ * Clearing, say) never touch v_grir_balance at all and must not be offered
+ * a match: there's nothing to clear, and matching one to a fresh receipt
+ * would double the stock it already recorded.
+ */
+export async function isGrirOutstanding(documentId: string): Promise<boolean> {
+  const [row] = await sql`select 1 from v_grir_balance where document_id = ${documentId}`;
+  return !!row;
+}
+
 export async function getOpenGoodsReceipts(companyId: string) {
   return sql`
     select d.id, d.doc_no, d.doc_date, d.partner_id,

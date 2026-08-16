@@ -11,6 +11,7 @@ import {
   getOpenPurchaseOrders,
   getChainDocuments,
   getSettlingPayment,
+  isGrirOutstanding,
 } from "@/lib/queries";
 import { createDelivery, createGoodsReceipt } from "@/lib/actions";
 import { FulfillOrderForm } from "@/components/fulfill-order-form";
@@ -29,6 +30,19 @@ const CHAINS: Record<string, string[]> = {
 };
 
 const label = (t: string) => t.replace(/_/g, " ").toLowerCase();
+
+// Matches the tab labels on the documents list itself — "delivery" doesn't
+// just take an s.
+const PLURAL: Record<string, string> = {
+  PURCHASE_ORDER: "Purchase orders",
+  GOODS_RECEIPT: "Goods receipts",
+  PURCHASE_INVOICE: "Purchase invoices",
+  SUPPLIER_PAYMENT: "Supplier payments",
+  SALES_ORDER: "Sales orders",
+  DELIVERY: "Deliveries",
+  SALES_INVOICE: "Sales invoices",
+  CUSTOMER_RECEIPT: "Customer receipts",
+};
 
 export default async function DocumentPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -67,15 +81,18 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
     stageDoc[paymentStep] = invoiceStage ? ((await getSettlingPayment(invoiceStage.id)) as any) : null;
   }
 
-  // A goods receipt nothing has matched to yet, or a purchase invoice that
-  // never named a receipt and no receipt has matched to it either — the
-  // two ways this session's GR/IR matching work can still be left undone.
-  const needsInvoiceMatch =
-    doc.doc_type === "GOODS_RECEIPT" && doc.status === "POSTED" &&
-    !downstream.some((d: any) => d.doc_type === "PURCHASE_INVOICE");
-  const needsReceiptMatch =
-    doc.doc_type === "PURCHASE_INVOICE" && doc.status === "POSTED" &&
-    !doc.source_id && !downstream.some((d: any) => d.doc_type === "GOODS_RECEIPT");
+  // Only offer to match this document against its counterpart if it
+  // actually has an outstanding GR/IR clearing balance — not just "no
+  // downstream document yet." A document that never touched GR/IR clearing
+  // in the first place (an old purchase invoice that posted straight to
+  // Inventory, from before this pattern existed) has nothing to clear, and
+  // matching one to a fresh receipt would double-count the stock it already
+  // recorded rather than reconcile anything.
+  const isGr = doc.doc_type === "GOODS_RECEIPT" && doc.status === "POSTED";
+  const isPi = doc.doc_type === "PURCHASE_INVOICE" && doc.status === "POSTED";
+  const grirOutstanding = (isGr || isPi) ? await isGrirOutstanding(doc.id) : false;
+  const needsInvoiceMatch = isGr && grirOutstanding;
+  const needsReceiptMatch = isPi && grirOutstanding;
 
   let orderLines: {
     lineId: string; itemId: string; itemCode: string; itemName: string;
@@ -98,7 +115,12 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
   return (
     <>
       <div className="page-head">
-        <span className="eyebrow">{label(doc.doc_type)}</span>
+        <span className="eyebrow">
+          <Link href={`/documents?type=${doc.doc_type}`} style={{ color: "var(--muted)" }}>
+            {PLURAL[doc.doc_type] ?? label(doc.doc_type)}
+          </Link>
+          {" / "}{doc.doc_no ?? "Draft"}
+        </span>
         <h1>{doc.doc_no ?? "Draft"}</h1>
         <span className="page-sub">
           {doc.partner_name ?? "No partner"} · posted {shortDate(doc.posting_date)}
