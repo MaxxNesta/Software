@@ -132,6 +132,48 @@ export async function getAging(companyId: string) {
        when '61-90' then 3 else 4 end`;
 }
 
+/**
+ * Every invoice of one type, posted or not, for a management list screen —
+ * distinct from getOpenItems, which only returns what is still owed.
+ * Posted rows come from v_invoice_status (paid, outstanding, payment_status,
+ * days_overdue all precomputed there); draft/cancelled/reversed rows carry
+ * zero paid/outstanding, since neither ever had a ledger effect, but their
+ * gross_total is still shown for reference. Nothing in the app leaves an
+ * invoice in those states today, so this half of the union returns nothing
+ * in practice -- it is here so the list stays correct if that changes.
+ */
+export async function getInvoiceList(companyId: string, docType: "SALES_INVOICE" | "PURCHASE_INVOICE") {
+  return sql`
+    select document_id, doc_no, posting_date, due_date,
+           partner_id, partner_code, partner_name,
+           gross_total, paid, outstanding, 'POSTED' as doc_status,
+           payment_status, days_overdue
+      from v_invoice_status
+     where company_id = ${companyId} and doc_type = ${docType}
+
+     union all
+
+     select d.id as document_id, d.doc_no, d.posting_date, d.due_date,
+            d.partner_id, p.code as partner_code, p.name as partner_name,
+            d.gross_total, 0::numeric as paid, 0::numeric as outstanding,
+            d.status as doc_status, null as payment_status, null::int as days_overdue
+       from document d
+       join business_partner p on p.id = d.partner_id
+      where d.company_id = ${companyId} and d.doc_type = ${docType} and d.status <> 'POSTED'
+
+     order by posting_date desc, doc_no desc`;
+}
+
+/** What each customer/supplier owes or is owed, for a per-partner rollup. */
+export async function getPartnerBalances(companyId: string, docType: "SALES_INVOICE" | "PURCHASE_INVOICE") {
+  return sql`
+    select partner_id, partner_code, partner_name,
+           open_invoices, invoiced, paid, outstanding, overdue, due_soon, credit_limit
+      from v_partner_balance
+     where company_id = ${companyId} and doc_type = ${docType}
+     order by outstanding desc`;
+}
+
 export async function getOpenItems(companyId: string, docType: string) {
   return sql`
     select document_id, doc_no, partner_name, posting_date, due_date,

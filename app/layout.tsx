@@ -50,6 +50,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <NavGroup label="Sales" icon={<ShoppingCart size={14} />} match={["/sales", "/receivables"]}>
               <NavLink href="/sales/orders/new">New sales order</NavLink>
               <NavLink href="/sales/new">New sales invoice</NavLink>
+              <NavLink href="/sales/invoices" exact>Sales invoices</NavLink>
               <NavLink href="/sales/deliver">Deliveries</NavLink>
               <NavLink href="/sales/returns/new">Customer return</NavLink>
               <NavLink href="/receivables/receive">Receive payment</NavLink>
@@ -59,6 +60,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <NavGroup label="Purchases" icon={<Package size={14} />} match={["/purchases", "/payables"]}>
               <NavLink href="/purchases/orders/new">New purchase order</NavLink>
               <NavLink href="/purchases/new">New purchase invoice</NavLink>
+              <NavLink href="/purchases/invoices" exact>Purchase invoices</NavLink>
               <NavLink href="/purchases/receive">Goods receipts</NavLink>
               <NavLink href="/purchases/returns/new">Supplier return</NavLink>
               <NavLink href="/payables/pay">Pay supplier</NavLink>

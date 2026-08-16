@@ -62,3 +62,54 @@ export function timeOfDay(d: Date | string | null | undefined, tz = DISPLAY_TZ):
     hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz,
   });
 }
+
+// ------------------------------------------------------- invoice status --
+
+/**
+ * A single status per invoice for a list screen, in priority order: a
+ * document that never posted (or was undone) says so before anything about
+ * payment is relevant; among posted invoices, fully paid wins, then overdue
+ * (unpaid past its due date) beats merely partial, and an invoice with
+ * nothing paid and not yet due is just "Posted".
+ *
+ * Draft and Cancelled exist because document.status allows them, not
+ * because anything in this app currently leaves an invoice in either state
+ * — every posting function commits within one transaction. Included so the
+ * list is correct the day a draft-save or cancel flow is added, rather than
+ * silently dropping those rows.
+ */
+export type InvoiceDisplayStatus =
+  | "DRAFT" | "CANCELLED" | "PAID" | "OVERDUE" | "PARTIALLY_PAID" | "OPEN";
+
+export function invoiceDisplayStatus(row: {
+  docStatus: string;
+  paymentStatus: string | null;
+  outstanding: number | string;
+  daysOverdue: number | null;
+}): InvoiceDisplayStatus {
+  if (row.docStatus === "DRAFT") return "DRAFT";
+  if (row.docStatus !== "POSTED") return "CANCELLED"; // CANCELLED or REVERSED
+  if (row.paymentStatus === "PAID") return "PAID";
+  if (Number(row.outstanding) > 0 && row.daysOverdue !== null && row.daysOverdue > 0) return "OVERDUE";
+  if (row.paymentStatus === "PARTIALLY_PAID") return "PARTIALLY_PAID";
+  return "OPEN";
+}
+
+export const INVOICE_STATUS_LABEL: Record<InvoiceDisplayStatus, string> = {
+  DRAFT: "Draft",
+  CANCELLED: "Cancelled",
+  PAID: "Paid",
+  OVERDUE: "Overdue",
+  PARTIALLY_PAID: "Partially Paid",
+  OPEN: "Posted",
+};
+
+/** One of the .pill.* tones already used across the app — no new palette. */
+export const INVOICE_STATUS_PILL: Record<InvoiceDisplayStatus, string> = {
+  DRAFT: "draft",
+  CANCELLED: "draft",
+  PAID: "ok",
+  OVERDUE: "overdue",
+  PARTIALLY_PAID: "warn",
+  OPEN: "posted",
+};
