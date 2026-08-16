@@ -11,7 +11,7 @@ if (!process.env.DATABASE_URL) {
   process.env.DATABASE_URL = readFileSync(join(root, ".env"), "utf8")
     .match(/DATABASE_URL\s*=\s*(.+)/)[1].trim();
 }
-const { postSalesInvoice, postPurchaseInvoice } = await import("../lib/posting.ts");
+const { postSaleWithDelivery, postPurchaseWithReceipt } = await import("../lib/posting.ts");
 
 const url = process.env.DATABASE_URL;
 const local = url.includes("127.0.0.1") || url.includes("localhost");
@@ -28,8 +28,9 @@ try {
   // Start from a known state. These tests post real documents, and journal
   // entries and stock movements refuse row deletion by design, so anything a
   // previous run left has to go through TRUNCATE.
-  await sql.unsafe(`truncate table payment_allocation, stock_movement, document_line,
-    document, journal_line, journal_entry restart identity cascade`);
+  await sql.unsafe(`truncate table payment_allocation, stock_lot_consumption, stock_lot,
+    stock_movement, document_line, document, journal_line, journal_entry
+    restart identity cascade`);
   await sql`update number_series set next_value = 1`;
   // Promotions reference categories, so they have to go first.
   await sql`delete from promotion`;
@@ -65,17 +66,17 @@ try {
     values (${co.id}, 'TS-01', 'Test Supplier', true) returning id`;
   check("partners created", Boolean(cust.id && supp.id));
 
-  const pi = await postPurchaseInvoice({
+  const pi = await postPurchaseWithReceipt({
     companyId: co.id, partnerId: supp.id, locationId: loc.id,
     docDate: today, dueDate: null,
     lines: [{ itemId: item.id, qty: 50, unitPrice: 2000 }],
   });
-  check("purchase posts on a cleared database", Boolean(pi.docNo), pi.docNo);
+  check("receiving and billing posts on a cleared database", Boolean(pi.docNo), pi.docNo);
   check("numbering restarted at 1", pi.docNo.endsWith("000001"), pi.docNo);
   check("stock arrived",
     n((await sql`select fn_qty_on_hand(${co.id}, ${item.id}, ${loc.id}) as q`)[0].q) === 50);
 
-  const si = await postSalesInvoice({
+  const si = await postSaleWithDelivery({
     companyId: co.id, partnerId: cust.id, locationId: loc.id,
     docDate: today, dueDate: null,
     lines: [{ itemId: item.id, qty: 20, unitPrice: 3000 }],
@@ -84,8 +85,18 @@ try {
   check("stock reduced to 30",
     n((await sql`select fn_qty_on_hand(${co.id}, ${item.id}, ${loc.id}) as q`)[0].q) === 30);
 
-  const j = await sql`select account_code, debit, credit from v_journal_line where source_id = ${si.id}`;
-  check("account determination still resolves", j.length === 4, `${j.length} journal lines`);
+  // The sale posts across two documents now: the delivery carries cost, the
+  // invoice carries revenue. Every account has to resolve from the posting
+  // rules on a database that was set up from scratch.
+  const j = await sql`
+    select account_code from v_journal_line
+     where company_id = ${co.id} and account_code in ('1200', '4100', '5100', '1300')`;
+  const hit = new Set(j.map((r) => r.account_code));
+  check("account determination resolves receivables and revenue",
+    hit.has("1200") && hit.has("4100"));
+  check("account determination resolves COGS and inventory",
+    hit.has("5100") && hit.has("1300"),
+    [...hit].sort().join(" "));
 
   const [tb] = await sql`select coalesce(sum(balance),0) as v from v_trial_balance`;
   check("trial balance nets to zero", Math.abs(n(tb.v)) < 0.0001);

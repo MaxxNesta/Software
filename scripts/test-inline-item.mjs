@@ -13,7 +13,7 @@ if (!process.env.DATABASE_URL) {
 }
 
 const { createItemInline } = await import("../lib/actions.ts");
-const { postPurchaseInvoice } = await import("../lib/posting.ts");
+const { postPurchaseWithReceipt } = await import("../lib/posting.ts");
 
 const url = process.env.DATABASE_URL;
 const local = url.includes("127.0.0.1") || url.includes("localhost");
@@ -32,8 +32,9 @@ try {
   // Start from a known state. Journal entries and stock movements refuse row
   // deletion by design, so anything a previous run posted has to go through
   // TRUNCATE before the items it references can be removed.
-  await sql.unsafe(`truncate table payment_allocation, stock_movement,
-    document_line, document, journal_line, journal_entry restart identity cascade`);
+  await sql.unsafe(`truncate table payment_allocation, stock_lot_consumption, stock_lot,
+    stock_movement, document_line, document, journal_line, journal_entry
+    restart identity cascade`);
   await sql`update number_series set next_value = 1`;
   await sql`delete from item where code like '77%'`;
   await sql`delete from item_group where code like '77%'`;
@@ -94,7 +95,7 @@ try {
     select id from location where company_id = ${co.id} and is_stock_location limit 1`;
 
   if (supp && loc && a.ok) {
-    const pi = await postPurchaseInvoice({
+    const pi = await postPurchaseWithReceipt({
       companyId: co.id, partnerId: supp.id, locationId: loc.id,
       docDate: new Date().toISOString().slice(0, 10), dueDate: null,
       lines: [{ itemId: a.item.id, qty: 50, unitPrice: 4500 }],
@@ -113,8 +114,9 @@ try {
 
   // The purchase above references the item, and journal entries and stock
   // movements refuse row deletion by design, so tear down through TRUNCATE.
-  await sql.unsafe(`truncate table payment_allocation, stock_movement,
-    document_line, document, journal_line, journal_entry restart identity cascade`);
+  await sql.unsafe(`truncate table payment_allocation, stock_lot_consumption, stock_lot,
+    stock_movement, document_line, document, journal_line, journal_entry
+    restart identity cascade`);
   await sql`delete from item where code like '77%'`;
   await sql`delete from item_group where code like '77%'`;
   await sql`delete from business_partner where code = 'TMP-S'`;

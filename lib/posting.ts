@@ -103,12 +103,24 @@ type FifoPlan = { totalCost: number; unitCost: number; draws: FifoDraw[] };
  * Reads the open lots oldest-first and decides what this issue draws from
  * each, without writing anything yet — the stock_movement row this belongs
  * to doesn't exist until after this returns, and consumption rows need its
- * id. Locks the lots it reads (`for update`) so two issues can't both plan
+ * id. Locks the lots first, in a separate ungrouped statement, so two issues
+ * can't both plan
  * against the same remaining quantity.
  */
 async function planFifoConsumption(
   tx: TransactionSql, companyId: string, itemId: string, locationId: string, qty: number
 ): Promise<FifoPlan> {
+  // Take the lock first, on its own. Postgres refuses FOR UPDATE on a query
+  // that groups, so the aggregate below cannot carry it — and without a lock
+  // two concurrent issues would each read the same remaining quantity and
+  // both draw against it, overdrawing the lot. The lock is held for the rest
+  // of the transaction, so the aggregate that follows sees a stable picture.
+  await tx`
+    select sl.id from stock_lot sl
+     where sl.company_id = ${companyId} and sl.item_id = ${itemId} and sl.location_id = ${locationId}
+     order by sl.received_date, sl.created_at
+       for update`;
+
   const lots = await tx`
     select sl.id, sl.unit_cost,
            sl.qty_received - coalesce(sum(c.qty), 0) as remaining
@@ -117,8 +129,7 @@ async function planFifoConsumption(
      where sl.company_id = ${companyId} and sl.item_id = ${itemId} and sl.location_id = ${locationId}
      group by sl.id, sl.unit_cost, sl.qty_received, sl.received_date, sl.created_at
     having sl.qty_received - coalesce(sum(c.qty), 0) > 0.0001
-     order by sl.received_date, sl.created_at
-       for update of sl`;
+     order by sl.received_date, sl.created_at`;
 
   let need = round4(qty);
   const draws: FifoDraw[] = [];
