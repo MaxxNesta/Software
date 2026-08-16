@@ -315,23 +315,42 @@ export async function getDocumentOutstanding(documentId: string): Promise<number
 }
 
 /**
- * Every document connected to this one via source_document_id, either
- * direction — the real documents behind a chain diagram like
- * PO → GR → PI → Payment, so the detail page can link each stage to
- * whatever actually exists instead of just labelling the stage names.
- * Expands outward a few hops at a time until nothing new turns up.
+ * Every document in this one's own chain — the real documents behind a
+ * diagram like PO → GR → PI → Payment, so the detail page can link each
+ * stage to whatever actually exists instead of just labelling the stage
+ * names. Two separate walks, not one connected-component search: upward
+ * via source_document_id is always a single deterministic path (a document
+ * has at most one source), but a shared ancestor can have more than one
+ * child — a purchase order with two receipts, say. Expanding outward from
+ * that ancestor would surface a *sibling's* invoice as if it belonged to
+ * the receipt actually being viewed. Walking down only from the document
+ * itself, never through an ancestor found along the way, rules that out.
  */
 export async function getChainDocuments(documentId: string) {
-  const seen = new Map<string, { id: string; doc_type: string; doc_no: string; source_document_id: string | null }>();
-  let frontier = [documentId];
+  type Row = { id: string; doc_type: string; doc_no: string; source_document_id: string | null };
+  const seen = new Map<string, Row>();
 
-  for (let hop = 0; hop < 4 && frontier.length > 0; hop++) {
-    const rows = await sql`
+  const [self] = (await sql`
+    select id, doc_type, doc_no, source_document_id from document where id = ${documentId}`) as Row[];
+  if (!self) return [];
+  seen.set(self.id, self);
+
+  let cursor = self.source_document_id;
+  for (let hop = 0; hop < 3 && cursor; hop++) {
+    const [row] = (await sql`
+      select id, doc_type, doc_no, source_document_id from document where id = ${cursor}`) as Row[];
+    if (!row || seen.has(row.id)) break;
+    seen.set(row.id, row);
+    cursor = row.source_document_id;
+  }
+
+  let frontier = [self.id];
+  for (let hop = 0; hop < 3 && frontier.length > 0; hop++) {
+    const rows = (await sql`
       select id, doc_type, doc_no, source_document_id
-        from document
-       where id = any(${frontier}) or source_document_id = any(${frontier})`;
+        from document where source_document_id = any(${frontier})`) as Row[];
     const next: string[] = [];
-    for (const r of rows as any[]) {
+    for (const r of rows) {
       if (!seen.has(r.id)) {
         seen.set(r.id, r);
         next.push(r.id);
