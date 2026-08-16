@@ -365,6 +365,41 @@ export async function getChartOfAccounts(companyId: string) {
 // --------------------------------------------------- orders & fulfilment --
 
 /** Open sales order lines — ordered less delivered so far, only where that's still positive. */
+/**
+ * Every order of one type, at whatever stage of fulfilment, for a
+ * management list -- distinct from getOpenSalesOrders/getOpenPurchaseOrders,
+ * which return only the still-open lines a delivery/receipt worklist needs.
+ * ordered_qty and fulfilled_qty are summed once per order here (rather than
+ * left per line) so orderDisplayStatus can classify the whole document.
+ */
+export async function getOrderList(
+  companyId: string,
+  docType: "SALES_ORDER" | "PURCHASE_ORDER"
+) {
+  const fulfilmentType = docType === "SALES_ORDER" ? "DELIVERY" : "GOODS_RECEIPT";
+
+  return sql`
+    select o.id as document_id, o.doc_no, o.posting_date, o.due_date,
+           o.partner_id, p.code as partner_code, p.name as partner_name,
+           o.gross_total, o.status as doc_status,
+           coalesce(sum(ol.base_qty), 0)      as ordered_qty,
+           coalesce(sum(fl.line_fulfilled), 0) as fulfilled_qty
+      from document o
+      join business_partner p on p.id = o.partner_id
+      left join document_line ol on ol.document_id = o.id
+      left join (
+            select dl.source_line_id, sum(dl.base_qty) as line_fulfilled
+              from document_line dl
+              join document dd on dd.id = dl.document_id
+             where dd.company_id = ${companyId} and dd.doc_type = ${fulfilmentType} and dd.status = 'POSTED'
+             group by dl.source_line_id
+      ) fl on fl.source_line_id = ol.id
+     where o.company_id = ${companyId} and o.doc_type = ${docType}
+     group by o.id, o.doc_no, o.posting_date, o.due_date,
+              o.partner_id, p.code, p.name, o.gross_total, o.status
+     order by o.posting_date desc, o.doc_no desc`;
+}
+
 export async function getOpenSalesOrders(companyId: string) {
   return sql`
     select o.id as order_id, o.doc_no as order_no, o.partner_id, p.name as partner_name,

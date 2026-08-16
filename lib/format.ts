@@ -113,3 +113,46 @@ export const INVOICE_STATUS_PILL: Record<InvoiceDisplayStatus, string> = {
   PARTIALLY_PAID: "warn",
   OPEN: "posted",
 };
+
+// --------------------------------------------------------- order status --
+
+/**
+ * An order's progress is a fulfilment condition, not a payment one --
+ * mirrors invoiceDisplayStatus's shape (doc_status first, then a derived
+ * condition) but the condition being derived is quantity delivered/received
+ * against quantity ordered, not money paid against money billed.
+ */
+export type OrderDisplayStatus =
+  | "DRAFT" | "CANCELLED" | "FULFILLED" | "PARTIALLY_FULFILLED" | "OPEN";
+
+export function orderDisplayStatus(row: {
+  docStatus: string;
+  orderedQty: number | string;
+  fulfilledQty: number | string;
+}): OrderDisplayStatus {
+  if (row.docStatus === "DRAFT") return "DRAFT";
+  if (row.docStatus !== "POSTED") return "CANCELLED";
+
+  const ordered = Number(row.orderedQty);
+  const fulfilled = Number(row.fulfilledQty);
+
+  if (ordered > 0 && fulfilled >= ordered - 0.0001) return "FULFILLED";
+  if (fulfilled > 0.0001) return "PARTIALLY_FULFILLED";
+  return "OPEN";
+}
+
+export const ORDER_STATUS_LABEL: Record<OrderDisplayStatus, string> = {
+  DRAFT: "Draft",
+  CANCELLED: "Cancelled",
+  FULFILLED: "Fulfilled",
+  PARTIALLY_FULFILLED: "Partially Fulfilled",
+  OPEN: "Open",
+};
+
+export const ORDER_STATUS_PILL: Record<OrderDisplayStatus, string> = {
+  DRAFT: "draft",
+  CANCELLED: "draft",
+  FULFILLED: "ok",
+  PARTIALLY_FULFILLED: "warn",
+  OPEN: "posted",
+};
