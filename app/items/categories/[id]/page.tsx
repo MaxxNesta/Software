@@ -109,7 +109,7 @@ export default async function CategoryLevel({ params }: { params: Promise<{ id: 
                 <thead>
                   <tr>
                     <th>Code</th><th>Name</th>
-                    <th className="r">Inside</th><th className="r">Items</th><th />
+                    <th className="r">Items</th><th />
                   </tr>
                 </thead>
                 <tbody>
@@ -119,7 +119,8 @@ export default async function CategoryLevel({ params }: { params: Promise<{ id: 
                     return (
                       <CategoryRow
                         key={g.id}
-                        category={{ ...g, inside: counts.childrenOf(g.id), total }}
+                        category={{ ...g, inside: 0, total }}
+                        showInside={false}
                         returnTo={returnTo}
                         updateAction={updateCategory}
                         deactivateAction={deactivateCategory}

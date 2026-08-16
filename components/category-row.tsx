@@ -17,6 +17,7 @@ export function CategoryRow({
   category,
   returnTo,
   parentName,
+  showInside = true,
   updateAction,
   deleteAction,
   deactivateAction,
@@ -25,6 +26,8 @@ export function CategoryRow({
   returnTo: string;
   /** Shown as its own column when set — the parent category, for a flat list spanning many parents. */
   parentName?: string | null;
+  /** Categories two levels deep can never have children — leave this off wherever every row shown is at that depth, since it would only ever read as 0. */
+  showInside?: boolean;
   updateAction: (prev: unknown, fd: FormData) => Promise<ActionResult>;
   deleteAction: (prev: unknown, fd: FormData) => Promise<ActionResult>;
   deactivateAction: (prev: unknown, fd: FormData) => Promise<ActionResult>;
@@ -50,7 +53,7 @@ export function CategoryRow({
   if (editing) {
     return (
       <tr>
-        <td colSpan={parentName !== undefined ? 6 : 5}>
+        <td colSpan={(parentName !== undefined ? 5 : 4) + (showInside ? 1 : 0)}>
           <form action={formAction} className="form" style={{ padding: "0.5rem 0" }}>
             {state && "error" in state && <div className="alert">{state.error}</div>}
             <input type="hidden" name="id" value={category.id} />
@@ -99,7 +102,7 @@ export function CategoryRow({
       {parentName !== undefined && (
         <td className="wrap" style={{ color: "var(--muted)" }}>{parentName ?? "—"}</td>
       )}
-      <td className="r">{category.inside || ""}</td>
+      {showInside && <td className="r">{category.inside || ""}</td>}
       <td className="r">{category.total || ""}</td>
       <td>
         <span className="actions">

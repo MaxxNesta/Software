@@ -16,7 +16,10 @@ export default async function Subcategories() {
   const subs = subcategories(nodes).map((s) => ({
     ...s,
     parentName: nodes.find((n) => n.id === s.parent_id)?.name ?? null,
-    inside: counts.childrenOf(s.id),
+    // Categories two levels deep can't have children of their own, so this
+    // is always 0 here — kept only because CategoryRow's shape needs it,
+    // never shown (see showInside below).
+    inside: 0,
     total: branchIds(nodes, s.id).reduce((sum, id) => sum + counts.itemsIn(id), 0),
   }));
 
@@ -25,12 +28,13 @@ export default async function Subcategories() {
     searchText: [s.code, s.name, s.name_my, s.parentName].filter(Boolean).join(" "),
     sort: {
       code: s.code, name: s.name, parentName: s.parentName ?? "",
-      inside: s.inside, total: s.total, is_active: s.is_active ? 1 : 0,
+      total: s.total, is_active: s.is_active ? 1 : 0,
     },
     node: (
       <CategoryRow
         category={s}
         parentName={s.parentName}
+        showInside={false}
         returnTo="/items/subcategories"
         updateAction={updateCategory}
         deactivateAction={deactivateCategory}
@@ -82,7 +86,6 @@ export default async function Subcategories() {
                 { key: "code", label: "Code", sortable: true },
                 { key: "name", label: "Name", sortable: true },
                 { key: "parentName", label: "Category", sortable: true },
-                { key: "inside", label: "Inside", sortable: true, align: "r" },
                 { key: "total", label: "Items", sortable: true, align: "r" },
                 { key: "actions", label: "" },
               ]}
