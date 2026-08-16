@@ -3,7 +3,7 @@ import { Inter, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Link from "next/link";
 import { getCompany } from "@/lib/queries";
-import { NavLink, NavGroup } from "./nav";
+import { NavLink, NavGroup, NavSubGroup } from "./nav";
 import { Toast } from "@/components/toast";
 import {
   LayoutDashboard, ShoppingCart, Package, Wallet, BookOpen, Boxes, Database,
@@ -84,13 +84,21 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               "/finance/journal", "/finance/opening", "/finance/general-ledger", "/ledger",
               "/finance/income-statement", "/finance/balance-sheet", "/finance/cash-flow",
             ]}>
-              <NavLink href="/finance/journal">Journal entries</NavLink>
-              <NavLink href="/finance/opening">Opening balances</NavLink>
-              <NavLink href="/finance/general-ledger">General ledger</NavLink>
-              <NavLink href="/ledger">Trial balance</NavLink>
-              <NavLink href="/finance/income-statement">Income statement</NavLink>
-              <NavLink href="/finance/balance-sheet">Balance sheet</NavLink>
-              <NavLink href="/finance/cash-flow">Cash flow</NavLink>
+              <NavSubGroup label="Transactions" match={["/finance/journal", "/finance/opening"]}>
+                <NavLink href="/finance/journal" sub>Journal Entries</NavLink>
+                <NavLink href="/finance/opening" sub>Opening Balances</NavLink>
+              </NavSubGroup>
+              <NavSubGroup label="Ledgers" match={["/finance/general-ledger", "/ledger"]}>
+                <NavLink href="/finance/general-ledger" sub>General Ledger</NavLink>
+                <NavLink href="/ledger" sub>Trial Balance</NavLink>
+              </NavSubGroup>
+              <NavSubGroup label="Financial Reports" match={[
+                "/finance/income-statement", "/finance/balance-sheet", "/finance/cash-flow",
+              ]}>
+                <NavLink href="/finance/income-statement" sub>Income Statement</NavLink>
+                <NavLink href="/finance/balance-sheet" sub>Balance Sheet</NavLink>
+                <NavLink href="/finance/cash-flow" sub>Cash Flow</NavLink>
+              </NavSubGroup>
             </NavGroup>
 
             <NavGroup label="Inventory" icon={<Boxes size={14} />} match={["/items/stock", "/inventory"]}>

@@ -96,7 +96,54 @@ export function NavGroup({
         </span>
         <span className="navcaret" data-open={isOpen}>›</span>
       </button>
-      {isOpen && <div className="navitems">{children}</div>}
+      {/* Rendered always, visibility toggled by CSS via data-open — not
+          conditionally unmounted. A collapsed group with unmounted children
+          has no click target left on narrow screens, where the toggle
+          button itself is hidden by the mobile layout: there would be no
+          way back into it. CSS-driven visibility keeps the links reachable
+          there while still collapsing on desktop. */}
+      <div className="navitems" data-open={isOpen}>{children}</div>
+    </div>
+  );
+}
+
+/**
+ * A second collapse level, nested inside a NavGroup — e.g. "Transactions"
+ * and "Ledgers" inside "Accounting". Same open/auto-open/CSS-visibility
+ * behaviour as NavGroup, styled one step smaller and further indented so it
+ * reads as "part of" the group above it rather than a sibling section.
+ */
+export function NavSubGroup({
+  label,
+  match,
+  children,
+  defaultOpen,
+}: {
+  label: string;
+  /** Path prefixes that belong to this sub-group. */
+  match: string[];
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const pathname = usePathname();
+  const contains = match.some((m) => pathname.startsWith(m));
+  const [open, setOpen] = useState<boolean | null>(null);
+
+  const isOpen = open ?? (contains || Boolean(defaultOpen));
+
+  return (
+    <div className="navsubgroup">
+      <button
+        type="button"
+        className="navsubhead"
+        onClick={() => setOpen(!isOpen)}
+        aria-expanded={isOpen}
+        data-inside={contains}
+      >
+        <span>{label}</span>
+        <span className="navcaret" data-open={isOpen}>›</span>
+      </button>
+      <div className="navsubitems" data-open={isOpen}>{children}</div>
     </div>
   );
 }

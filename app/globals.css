@@ -440,11 +440,37 @@ button.tiny { padding: 0.16rem 0.5rem; font-size: 0.78rem; }
 .navcaret { transition: transform 150ms; display: inline-block; font-size: 0.9rem; }
 .navcaret[data-open="true"] { transform: rotate(90deg); }
 
-.navitems { display: flex; flex-direction: column; gap: 1px; padding-bottom: var(--s2); }
+/* display:none by default; opened by the [data-open] attribute rather
+   than by React unmounting the subtree, so the links still exist in the DOM
+   (and are still reachable) once the mobile rule below forces them visible
+   regardless of desktop open/closed state. */
+.navitems { display: none; flex-direction: column; gap: 1px; padding-bottom: var(--s2); }
+.navitems[data-open="true"] { display: flex; }
+
+.navsubgroup { display: flex; flex-direction: column; }
+
+.navsubhead {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; background: transparent; border: none; border-radius: 0;
+  padding: 0.34rem var(--s4) 0.34rem calc(var(--s4) + 0.9rem);
+  font-size: 0.8rem; font-weight: 500;
+  color: var(--ink-soft); cursor: pointer;
+}
+.navsubhead:hover { background: var(--line-soft); color: var(--ink); }
+.navsubhead[data-inside="true"] { color: var(--ink); }
+.navsubhead .navcaret { font-size: 0.8rem; }
+
+.navsubitems { display: none; flex-direction: column; gap: 1px; }
+.navsubitems[data-open="true"] { display: flex; }
 
 @media (max-width: 820px) {
   .navhead { display: none; }
-  .navitems { flex-direction: row; padding-bottom: 0; }
+  .navsubhead { display: none; }
+  /* The toggle buttons above are hidden by this same layout, so nothing on
+     the page could reopen a collapsed section — force every level visible
+     instead and let the existing horizontal, scrollable row carry all of
+     it, the way the flat pre-collapse nav always worked here. */
+  .navitems, .navsubitems { display: flex !important; flex-direction: row; padding-bottom: 0; }
 }
 
 /* A link that looks like a button. Nesting a <button> inside an <a> is
