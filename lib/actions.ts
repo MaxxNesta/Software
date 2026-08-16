@@ -91,11 +91,11 @@ export async function companyExists(): Promise<boolean> {
 
 export async function createPartner(_prev: unknown, fd: FormData): Promise<ActionResult> {
   const toastMsg = "Partner added";
+  const code = str(fd, "code").toUpperCase();
 
   try {
     const co = await companyId();
 
-    const code = str(fd, "code").toUpperCase();
     const name = str(fd, "name");
     const isCustomer = fd.get("is_customer") === "on";
     const isSupplier = fd.get("is_supplier") === "on";
@@ -119,6 +119,7 @@ export async function createPartner(_prev: unknown, fd: FormData): Promise<Actio
          ${str(fd, "phone") || null}, ${num(fd, "payment_terms_days")},
          ${fd.get("credit_limit") ? num(fd, "credit_limit") : null})`;
   } catch (e) {
+    if (isUniqueViolation(e)) return { error: `Code ${code} is already used` };
     return { error: e instanceof Error ? e.message : String(e) };
   }
 
@@ -130,6 +131,7 @@ export async function createPartner(_prev: unknown, fd: FormData): Promise<Actio
 
 export async function createCategory(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let returnTo: string | null = null;
+  let composedCode: string | null = null;
   const toastMsg = "Category added";
 
   try {
@@ -157,6 +159,7 @@ export async function createCategory(_prev: unknown, fd: FormData): Promise<Acti
     // code, so check the composed value rather than the segment alone.
     const [composed] = await sql`
       select fn_compose_group_code(${parentId}::uuid, ${segment}) as code`;
+    composedCode = composed.code;
 
     const dup = await sql`
       select name from item_group where company_id = ${co} and code = ${composed.code}`;
@@ -169,6 +172,7 @@ export async function createCategory(_prev: unknown, fd: FormData): Promise<Acti
       values (${co}, ${parentId}, ${segment}, ${composed.code}, ${name},
               ${str(fd, "name_my") || null})`;
   } catch (e) {
+    if (isUniqueViolation(e)) return { error: `Code ${composedCode} is already used` };
     return { error: e instanceof Error ? e.message : String(e) };
   }
 
@@ -289,6 +293,7 @@ export async function moveCategory(_prev: unknown, fd: FormData): Promise<Action
 
 export async function createItem(_prev: unknown, fd: FormData): Promise<ActionResult> {
   let returnTo: string | null = null;
+  let fullCode: string | null = null;
   const toastMsg = "Item added";
 
   try {
@@ -311,7 +316,7 @@ export async function createItem(_prev: unknown, fd: FormData): Promise<ActionRe
       select code from item_group where id = ${groupId} and company_id = ${co}`;
     if (!grp) return { error: "That category no longer exists" };
 
-    const fullCode = `${grp.code}${serial}`;
+    fullCode = `${grp.code}${serial}`;
     const dup = await sql`
       select name from item where company_id = ${co} and code = ${fullCode}`;
     if (dup.length) {
@@ -340,6 +345,7 @@ export async function createItem(_prev: unknown, fd: FormData): Promise<ActionRe
       }
     });
   } catch (e) {
+    if (isUniqueViolation(e)) return { error: `Code ${fullCode} is already used` };
     return { error: e instanceof Error ? e.message : String(e) };
   }
 
@@ -353,11 +359,11 @@ export async function createItem(_prev: unknown, fd: FormData): Promise<ActionRe
 
 export async function createBrand(_prev: unknown, fd: FormData): Promise<ActionResult> {
   const toastMsg = "Brand added";
+  const code = str(fd, "code").toUpperCase();
 
   try {
     const co = await companyId();
 
-    const code = str(fd, "code").toUpperCase();
     const name = str(fd, "name");
 
     if (!code) return { error: "Code is required" };
@@ -370,6 +376,7 @@ export async function createBrand(_prev: unknown, fd: FormData): Promise<ActionR
       insert into brand (company_id, code, name, name_my)
       values (${co}, ${code}, ${name}, ${str(fd, "name_my") || null})`;
   } catch (e) {
+    if (isUniqueViolation(e)) return { error: `Code ${code} is already used` };
     return { error: e instanceof Error ? e.message : String(e) };
   }
 
@@ -408,6 +415,7 @@ export async function createBrandInline(
     revalidatePath("/items/brands");
     return { ok: true, brand: { id: brand.id, code: brand.code, name: brand.name } };
   } catch (e) {
+    if (isUniqueViolation(e)) return { ok: false, error: "That brand code was just taken — try again" };
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
@@ -437,6 +445,8 @@ export type PickerItem = {
 export async function createItemInline(
   input: NewItemInput
 ): Promise<{ ok: true; item: PickerItem } | { ok: false; error: string }> {
+  let fullCode: string | null = null;
+
   try {
     const co = await companyId();
 
@@ -462,7 +472,7 @@ export async function createItemInline(
       serial = String(next.n).padStart(3, "0");
     }
 
-    const fullCode = `${grp.code}${serial}`;
+    fullCode = `${grp.code}${serial}`;
     const dup = await sql`
       select name from item where company_id = ${co} and code = ${fullCode}`;
     if (dup.length) {
@@ -515,6 +525,7 @@ export async function createItemInline(
       },
     };
   } catch (e) {
+    if (isUniqueViolation(e)) return { ok: false, error: `Code ${fullCode} is already used` };
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
@@ -1354,13 +1365,24 @@ function isForeignKeyViolation(e: unknown): boolean {
   return typeof e === "object" && e !== null && (e as { code?: string }).code === "23503";
 }
 
+/**
+ * True (23505) when a create raced another request for the same code. Every
+ * master-data create already pre-checks for a duplicate before inserting, so
+ * this only ever fires on an actual race — but without it, that rare case
+ * would surface Postgres's raw constraint-violation text instead of a
+ * message someone entering data can actually act on.
+ */
+function isUniqueViolation(e: unknown): boolean {
+  return typeof e === "object" && e !== null && (e as { code?: string }).code === "23505";
+}
+
 export async function createLocation(_prev: unknown, fd: FormData): Promise<ActionResult> {
   const toastMsg = "Warehouse added";
+  const code = str(fd, "code").toUpperCase();
 
   try {
     const co = await companyId();
 
-    const code = str(fd, "code").toUpperCase();
     const name = str(fd, "name");
     const parentId = str(fd, "parent_id") || null;
 
@@ -1375,6 +1397,7 @@ export async function createLocation(_prev: unknown, fd: FormData): Promise<Acti
       values (${co}, ${parentId}, ${code}, ${name}, ${str(fd, "name_my") || null},
               ${fd.get("is_stock_location") === "on"})`;
   } catch (e) {
+    if (isUniqueViolation(e)) return { error: `Code ${code} is already used` };
     return { error: e instanceof Error ? e.message : String(e) };
   }
 
@@ -1470,11 +1493,11 @@ export async function deleteLocation(_prev: unknown, fd: FormData): Promise<Acti
 
 export async function createSalesman(_prev: unknown, fd: FormData): Promise<ActionResult> {
   const toastMsg = "Salesperson added";
+  const code = str(fd, "code").toUpperCase();
 
   try {
     const co = await companyId();
 
-    const code = str(fd, "code").toUpperCase();
     const name = str(fd, "name");
 
     if (!code) return { error: "Code is required" };
@@ -1488,6 +1511,7 @@ export async function createSalesman(_prev: unknown, fd: FormData): Promise<Acti
       values (${co}, ${code}, ${name}, ${str(fd, "name_my") || null}, ${str(fd, "phone") || null},
               ${str(fd, "location_id") || null}, ${num(fd, "commission_pct")})`;
   } catch (e) {
+    if (isUniqueViolation(e)) return { error: `Code ${code} is already used` };
     return { error: e instanceof Error ? e.message : String(e) };
   }
 
@@ -1653,11 +1677,11 @@ function moneyFlags(kind: string): { cash: boolean; bank: boolean } {
 
 export async function createAccount(_prev: unknown, fd: FormData): Promise<ActionResult> {
   const toastMsg = "Account added";
+  const code = str(fd, "code");
 
   try {
     const co = await companyId();
 
-    const code = str(fd, "code");
     const name = str(fd, "name");
     const type = str(fd, "account_type");
     const parentId = str(fd, "parent_id") || null;
@@ -1712,6 +1736,7 @@ export async function createAccount(_prev: unknown, fd: FormData): Promise<Actio
     });
 
   } catch (e) {
+    if (isUniqueViolation(e)) return { error: `Code ${code} is already used` };
     return { error: e instanceof Error ? e.message : String(e) };
   }
 
