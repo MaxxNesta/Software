@@ -35,22 +35,6 @@ function connect() {
 export const sql = global.__sql ?? connect();
 if (process.env.NODE_ENV !== "production") global.__sql = sql;
 
-export function money(v: string | number | null | undefined): string {
-  const n = Number(v ?? 0);
-  return n.toLocaleString("en-US", { maximumFractionDigits: 0 });
-}
-
-export function qty(v: string | number | null | undefined): string {
-  const n = Number(v ?? 0);
-  return n.toLocaleString("en-US", { maximumFractionDigits: 2 });
-}
-
-export function shortDate(d: Date | string | null | undefined): string {
-  if (!d) return "—";
-  const date = typeof d === "string" ? new Date(d) : d;
-  return date.toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
+// Re-exported so the many pages importing these from "@/lib/db" keep working.
+// New code should import from "@/lib/format" directly.
+export { money, qty, shortDate, dateTime, timeOfDay, DISPLAY_TZ } from "./format";

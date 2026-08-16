@@ -63,10 +63,28 @@ try {
 
   for (const f of files) {
     const body = readFileSync(join(dir, f), "utf8");
-    const checksum = createHash("sha256").update(body).digest("hex").slice(0, 16);
+
+    // Hash with line endings normalised. Git checks these files out as CRLF
+    // on Windows and LF elsewhere, so hashing raw bytes makes the same
+    // migration look edited depending on who ran it — which would block
+    // every Windows developer on a repo migrated from a Mac, and vice versa.
+    // The checksum is meant to catch content changes, not whitespace.
+    const normalised = body.split("\r\n").join("\n");
+    const checksum = createHash("sha256").update(normalised).digest("hex").slice(0, 16);
+    const legacyChecksum = createHash("sha256").update(body).digest("hex").slice(0, 16);
 
     if (applied.has(f)) {
-      if (applied.get(f) !== checksum) {
+      const stored = applied.get(f);
+
+      // A checksum recorded before this normalisation is still valid; adopt
+      // the normalised one so it stops mattering.
+      if (stored !== checksum && stored === legacyChecksum) {
+        await sql`update schema_migration set checksum = ${checksum} where filename = ${f}`;
+        console.log(`  ${f} ... already applied (checksum normalised)`);
+        continue;
+      }
+
+      if (stored !== checksum) {
         // An applied migration that has since been edited means the database
         // and the repo disagree about history. Fail loudly rather than guess.
         throw new Error(
