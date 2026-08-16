@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { sql } from "@/lib/db";
-import { allCategories, subcategories, levelCounts, branchIds } from "@/lib/tree";
-import { updateCategory, deactivateCategory, deleteCategory } from "@/lib/actions";
+import { allCategories, subcategories, childrenOf, levelCounts, branchIds } from "@/lib/tree";
+import { createCategory, updateCategory, deactivateCategory, deleteCategory } from "@/lib/actions";
+import { AddCategoryForm } from "@/components/level-form";
 import { CategoryRow } from "@/components/category-row";
 import { DataTable, type DataRow } from "@/components/data-table";
 
@@ -10,6 +11,7 @@ export default async function Subcategories() {
   if (!co) return <div className="empty">No company found.</div>;
 
   const nodes = await allCategories(co.id);
+  const roots = childrenOf(nodes, null);
   const counts = await levelCounts(co.id);
   const subs = subcategories(nodes).map((s) => ({
     ...s,
@@ -48,6 +50,15 @@ export default async function Subcategories() {
           them.
         </span>
       </div>
+
+      <AddCategoryForm
+        action={createCategory}
+        categories={roots}
+        returnTo="/items/subcategories"
+        label="Sub category"
+        codeHint="01"
+        nameHint="Soft Drinks"
+      />
 
       <section>
         <div className="card">
