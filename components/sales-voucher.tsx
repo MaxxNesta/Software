@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 import type { ActionResult, PickerItem } from "@/lib/actions";
 import { ItemPicker } from "./item-picker";
 
@@ -177,6 +177,14 @@ export function SalesVoucher({
   const balance = total - cashAmount;
   const totalFree = lines.reduce((s, l) => s + freeQty(l), 0);
 
+  // Cash means paid in full now — keep Cash in synced to the total so it
+  // isn't a redundant retype of a number already on screen. Still a plain
+  // input underneath, so it stays editable if the amount actually taken
+  // differs (a customer paying in odd notes, say).
+  useEffect(() => {
+    if (paymentType === "CASH") setCashIn(String(total));
+  }, [paymentType, total]);
+
   // Discount is netted into the unit price. Trade discount posts nothing of
   // its own — only settlement discount gets an account.
   //
@@ -293,9 +301,9 @@ export function SalesVoucher({
               <label htmlFor="due_date">Due date</label>
               <input id="due_date" name="due_date" type="date" value={dueDate}
                 onChange={(e) => setDueDate(e.target.value)}
-                disabled={paymentType === "CASH"} required={paymentType === "CREDIT"} />
+                disabled={balance <= 0} required={balance > 0} />
               <span className="hint">
-                {paymentType === "CREDIT" ? "From payment terms — required so this can be tracked as overdue" : "From payment terms"}
+                {balance > 0 ? "From payment terms — required so this can be tracked as overdue" : "From payment terms"}
               </span>
             </div>
           </div>

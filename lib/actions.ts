@@ -858,12 +858,14 @@ export async function createSalesInvoice(_prev: unknown, fd: FormData): Promise<
     const dueDate = str(fd, "due_date") || null;
     const cashIn = num(fd, "cash_in");
     const toDeliver = fd.get("to_deliver") !== null;
+    const roughTotal = lines.reduce((s, l) => s + l.qty * l.unitPrice, 0);
 
-    // A credit invoice with no due date can never be flagged overdue no
+    // An invoice left with no due date can never be flagged overdue no
     // matter how large or how old its balance gets — v_open_item buckets a
-    // null due_date as permanently CURRENT. Cash invoices settle at posting
-    // and have nothing left to track, so they don't need one.
-    if (paymentType === "CREDIT" && !dueDate) return { error: "Credit invoices need a due date" };
+    // null due_date as permanently CURRENT. Going on the actual remaining
+    // balance rather than the payment-type label, since "Cash" doesn't
+    // guarantee cash_in covers the total — the field stays freely editable.
+    if (cashIn < roughTotal && !dueDate) return { error: "This invoice leaves a balance owing — add a due date" };
 
     const input = {
       companyId: co,
