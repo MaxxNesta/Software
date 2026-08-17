@@ -1,8 +1,13 @@
 import Link from "next/link";
 import { Boxes, PackageCheck, TrendingDown, AlertTriangle } from "lucide-react";
 import { money, qty } from "@/lib/db";
-import { getCompany, getItems, getReservedQty, getIncomingQty, getLowStock } from "@/lib/queries";
+import {
+  getCompany, getItems, getReservedQty, getIncomingQty, getLowStock, getReorderPoints, getLocations,
+} from "@/lib/queries";
+import { createReorderPoint, updateReorderPoint, deleteReorderPoint } from "@/lib/actions";
 import { DataTable, type DataRow } from "@/components/data-table";
+import { AddReorderPointForm } from "@/components/reorder-point-form";
+import { ReorderPointRow } from "@/components/reorder-point-row";
 
 type Row = {
   id: string; code: string; name: string; name_my: string | null;
@@ -14,15 +19,23 @@ export default async function Stock() {
   const company = await getCompany();
   if (!company) return <div className="empty">No company found.</div>;
 
-  const [items, reserved, incoming, lowStock] = await Promise.all([
+  const [items, reserved, incoming, lowStock, reorderPoints, locations] = await Promise.all([
     getItems(company.id) as unknown as Promise<Row[]>,
     getReservedQty(company.id) as unknown as Promise<Array<{ item_id: string; reserved_qty: string }>>,
     getIncomingQty(company.id) as unknown as Promise<Array<{ item_id: string; incoming_qty: string }>>,
     getLowStock(company.id) as unknown as Promise<Array<{
       item_id: string; item_code: string; item_name: string;
-      location_id: string; location_code: string; qty_on_hand: string; min_qty: string;
+      location_id: string; location_code: string; qty_on_hand: string; min_qty: string | null;
+      reason: "below_reorder" | "out_of_stock";
     }>>,
+    getReorderPoints(company.id) as unknown as Promise<Array<{
+      id: string; item_id: string; location_id: string; min_qty: string;
+      item_code: string; item_name: string; location_code: string;
+    }>>,
+    getLocations(company.id) as unknown as Promise<Array<{ id: string; code: string; name: string; is_stock_location: boolean }>>,
   ]);
+
+  const reorderableLocations = locations.filter((l) => l.is_stock_location);
 
   const reservedOf = (id: string) => Number(reserved.find((r) => r.item_id === id)?.reserved_qty ?? 0);
   const incomingOf = (id: string) => Number(incoming.find((r) => r.item_id === id)?.incoming_qty ?? 0);
@@ -110,7 +123,7 @@ export default async function Stock() {
             {lowStock.length}
           </span>
           <span className="kpi-note">
-            item/location pair{lowStock.length === 1 ? "" : "s"} below reorder point
+            item/location pair{lowStock.length === 1 ? "" : "s"} out of stock or below reorder point
           </span>
         </div>
         <div className="kpi">
@@ -130,14 +143,14 @@ export default async function Stock() {
           <div className="card">
             <div className="card-head">
               <h2>Low stock</h2>
-              <span className="page-sub">below the reorder point set on that item and location</span>
+              <span className="page-sub">out of stock, or below the reorder point set on that item and location</span>
             </div>
             <div className="tablewrap">
               <table>
                 <thead>
                   <tr>
-                    <th>Code</th><th>Item</th><th>Location</th>
-                    <th className="r">On hand</th><th className="r">Reorder point</th><th className="r">Short by</th>
+                    <th>Code</th><th>Item</th><th>Location</th><th>Status</th>
+                    <th className="r">On hand</th><th className="r">Reorder point</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -146,11 +159,15 @@ export default async function Stock() {
                       <td className="code">{r.item_code}</td>
                       <td className="wrap">{r.item_name}</td>
                       <td className="code">{r.location_code}</td>
-                      <td className="r">{qty(r.qty_on_hand)}</td>
-                      <td className="r">{qty(r.min_qty)}</td>
-                      <td className="r" style={{ color: "var(--bad)" }}>
-                        {qty(String(Number(r.min_qty) - Number(r.qty_on_hand)))}
+                      <td>
+                        <span className={`pill ${r.reason === "out_of_stock" ? "overdue" : "warn"}`}>
+                          {r.reason === "out_of_stock" ? "Out of stock" : "Below reorder"}
+                        </span>
                       </td>
+                      <td className="r" style={{ color: Number(r.qty_on_hand) <= 0 ? "var(--bad)" : undefined }}>
+                        {qty(r.qty_on_hand)}
+                      </td>
+                      <td className="r">{r.min_qty !== null ? qty(r.min_qty) : "—"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -159,6 +176,44 @@ export default async function Stock() {
           </div>
         </section>
       )}
+
+      <section>
+        <div className="card">
+          <div className="card-head">
+            <h2>Reorder points</h2>
+            <span className="page-sub">{reorderPoints.length} set</span>
+          </div>
+          <div className="card-body">
+            <AddReorderPointForm
+              action={createReorderPoint}
+              items={stocked.map((i) => ({ id: i.id, code: i.code, name: i.name }))}
+              locations={reorderableLocations}
+            />
+          </div>
+          {reorderPoints.length > 0 && (
+            <div className="tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Code</th><th>Item</th><th>Location</th>
+                    <th className="r">Reorder point</th><th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {reorderPoints.map((p) => (
+                    <ReorderPointRow
+                      key={p.id}
+                      point={p}
+                      updateAction={updateReorderPoint}
+                      deleteAction={deleteReorderPoint}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
 
       <section>
         <div className="card">

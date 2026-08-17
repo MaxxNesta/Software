@@ -759,26 +759,58 @@ export async function getTopCustomers(companyId: string, months: number = 6, lim
 }
 
 /**
- * Item/location pairs sitting below their reorder point. item_reorder rows
- * with no min_qty set are not a low-stock rule, just an unused row — and a
- * location with no stock_movement at all has no v_stock_on_hand row, which
- * reads as genuinely zero on hand rather than "unknown".
+ * Item/location pairs needing attention: below a configured reorder point,
+ * OR sitting at zero or negative on hand regardless of whether anyone ever
+ * configured one — a stockout is alarming on its own, not only once someone
+ * has gotten around to setting a threshold. v_stock_on_hand excludes any
+ * item/location that nets to exactly zero movement and value (it reads as
+ * "never stocked here", not "stocked out"), so this reads the raw movement
+ * ledger directly for the out-of-stock half of the check instead.
  */
 export async function getLowStock(companyId: string) {
   return sql`
+    with stock as (
+      select item_id, location_id, sum(qty) as qty_on_hand
+        from stock_movement
+       where company_id = ${companyId}
+       group by item_id, location_id
+    ),
+    keys as (
+      select item_id, location_id from item_reorder where company_id = ${companyId}
+      union
+      select s.item_id, s.location_id
+        from stock s
+        join item i on i.id = s.item_id
+       where i.company_id = ${companyId} and i.is_stocked and i.is_active
+    )
     select i.id as item_id, i.code as item_code, i.name as item_name,
            l.id as location_id, l.code as location_code,
            coalesce(s.qty_on_hand, 0) as qty_on_hand,
-           r.min_qty
+           r.min_qty,
+           case when r.min_qty is not null and coalesce(s.qty_on_hand, 0) < r.min_qty
+                then 'below_reorder' else 'out_of_stock' end as reason
+      from keys k
+      join item i on i.id = k.item_id
+      join location l on l.id = k.location_id
+      left join stock s on s.item_id = k.item_id and s.location_id = k.location_id
+      left join item_reorder r on r.item_id = k.item_id and r.location_id = k.location_id and r.company_id = ${companyId}
+     where (r.min_qty is not null and coalesce(s.qty_on_hand, 0) < r.min_qty)
+        or coalesce(s.qty_on_hand, 0) <= 0
+     order by (case when r.min_qty is not null then r.min_qty - coalesce(s.qty_on_hand, 0)
+                     else -coalesce(s.qty_on_hand, 0) end) desc`;
+}
+
+/** Every configured reorder point, for the management list on the Stock page — not just the ones currently violated. */
+export async function getReorderPoints(companyId: string) {
+  return sql`
+    select r.id, r.item_id, r.location_id, r.min_qty,
+           i.code as item_code, i.name as item_name,
+           l.code as location_code
       from item_reorder r
       join item i on i.id = r.item_id
       join location l on l.id = r.location_id
-      left join v_stock_on_hand s
-        on s.item_id = r.item_id and s.location_id = r.location_id and s.company_id = r.company_id
      where r.company_id = ${companyId}
-       and r.min_qty is not null
-       and coalesce(s.qty_on_hand, 0) < r.min_qty
-     order by (r.min_qty - coalesce(s.qty_on_hand, 0)) desc`;
+     order by i.code, l.code`;
 }
 
 /**

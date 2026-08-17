@@ -1937,6 +1937,68 @@ export async function createStockAdjustment(_prev: unknown, fd: FormData): Promi
   redirectWithToast(`/documents/${docId}`, toastMsg);
 }
 
+// ------------------------------------------------------------ reorder points --
+
+export async function createReorderPoint(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+    const itemId = str(fd, "item_id");
+    const locationId = str(fd, "location_id");
+    const minQty = num(fd, "min_qty");
+
+    if (!itemId) return { error: "Choose an item" };
+    if (!locationId) return { error: "Choose a location" };
+    if (minQty <= 0) return { error: "Reorder point must be greater than zero" };
+
+    const dup = await sql`
+      select 1 from item_reorder where company_id = ${co} and item_id = ${itemId} and location_id = ${locationId}`;
+    if (dup.length) return { error: "This item and location already has a reorder point — edit it instead" };
+
+    await sql`
+      insert into item_reorder (company_id, item_id, location_id, min_qty)
+      values (${co}, ${itemId}, ${locationId}, ${minQty})`;
+  } catch (e) {
+    if (isUniqueViolation(e)) return { error: "This item and location already has a reorder point — edit it instead" };
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/items/stock");
+  redirectWithToast("/items/stock", "Reorder point added");
+}
+
+export async function updateReorderPoint(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+    const id = str(fd, "id");
+    const minQty = num(fd, "min_qty");
+
+    if (!id) return { error: "Choose a reorder point" };
+    if (minQty <= 0) return { error: "Reorder point must be greater than zero" };
+
+    await sql`update item_reorder set min_qty = ${minQty} where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/items/stock");
+  redirectWithToast("/items/stock", "Reorder point updated");
+}
+
+export async function deleteReorderPoint(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  try {
+    const co = await companyId();
+    const id = str(fd, "id");
+    if (!id) return { error: "Choose a reorder point" };
+
+    await sql`delete from item_reorder where id = ${id} and company_id = ${co}`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/items/stock");
+  redirectWithToast("/items/stock", "Reorder point removed");
+}
+
 // --------------------------------------------------- chart of accounts --
 
 const ACCOUNT_TYPES = ["ASSET", "LIABILITY", "EQUITY", "REVENUE", "COGS", "EXPENSE"];
