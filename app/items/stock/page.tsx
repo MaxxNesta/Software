@@ -3,11 +3,13 @@ import { Boxes, PackageCheck, TrendingDown, AlertTriangle } from "lucide-react";
 import { money, qty } from "@/lib/db";
 import {
   getCompany, getItems, getReservedQty, getIncomingQty, getLowStock, getReorderPoints, getLocations,
+  getStockByLocation,
 } from "@/lib/queries";
 import { createReorderPoint, updateReorderPoint, deleteReorderPoint } from "@/lib/actions";
 import { DataTable, type DataRow } from "@/components/data-table";
 import { AddReorderPointForm } from "@/components/reorder-point-form";
 import { ReorderPointRow } from "@/components/reorder-point-row";
+import { AccountPicker } from "@/components/account-picker";
 
 type Row = {
   id: string; code: string; name: string; name_my: string | null;
@@ -15,14 +17,19 @@ type Row = {
   uom_code: string; qty_on_hand: string; value_on_hand: string; is_stocked: boolean;
 };
 
-export default async function Stock() {
+export default async function Stock({
+  searchParams,
+}: {
+  searchParams: Promise<{ location?: string }>;
+}) {
+  const { location } = await searchParams;
   const company = await getCompany();
   if (!company) return <div className="empty">No company found.</div>;
 
-  const [items, reserved, incoming, lowStock, reorderPoints, locations] = await Promise.all([
+  const [items, reserved, incoming, lowStock, reorderPoints, locations, stockByLocation] = await Promise.all([
     getItems(company.id) as unknown as Promise<Row[]>,
-    getReservedQty(company.id) as unknown as Promise<Array<{ item_id: string; reserved_qty: string }>>,
-    getIncomingQty(company.id) as unknown as Promise<Array<{ item_id: string; incoming_qty: string }>>,
+    getReservedQty(company.id) as unknown as Promise<Array<{ item_id: string; location_id: string; reserved_qty: string }>>,
+    getIncomingQty(company.id) as unknown as Promise<Array<{ item_id: string; location_id: string; incoming_qty: string }>>,
     getLowStock(company.id) as unknown as Promise<Array<{
       item_id: string; item_code: string; item_name: string;
       location_id: string; location_code: string; qty_on_hand: string; min_qty: string | null;
@@ -33,22 +40,45 @@ export default async function Stock() {
       item_code: string; item_name: string; location_code: string;
     }>>,
     getLocations(company.id) as unknown as Promise<Array<{ id: string; code: string; name: string; is_stock_location: boolean }>>,
+    getStockByLocation(company.id) as unknown as Promise<Array<{
+      item_id: string; location_id: string; qty_on_hand: string; value_on_hand: string;
+    }>>,
   ]);
 
   const reorderableLocations = locations.filter((l) => l.is_stock_location);
 
-  const reservedOf = (id: string) => Number(reserved.find((r) => r.item_id === id)?.reserved_qty ?? 0);
-  const incomingOf = (id: string) => Number(incoming.find((r) => r.item_id === id)?.incoming_qty ?? 0);
+  const selectedLocationId = location && reorderableLocations.some((l) => l.id === location) ? location : "all";
+  const allLocations = selectedLocationId === "all";
+
+  // Company-wide: sum across every row for that item. One warehouse: the
+  // single row for that item and location, or 0 if it's never touched it.
+  const onHandOf = (itemId: string, companyWide: number) =>
+    allLocations
+      ? companyWide
+      : Number(stockByLocation.find((r) => r.item_id === itemId && r.location_id === selectedLocationId)?.qty_on_hand ?? 0);
+  const valueOf = (itemId: string, companyWide: number) =>
+    allLocations
+      ? companyWide
+      : Number(stockByLocation.find((r) => r.item_id === itemId && r.location_id === selectedLocationId)?.value_on_hand ?? 0);
+  const reservedOf = (itemId: string) =>
+    allLocations
+      ? reserved.filter((r) => r.item_id === itemId).reduce((s, r) => s + Number(r.reserved_qty), 0)
+      : Number(reserved.find((r) => r.item_id === itemId && r.location_id === selectedLocationId)?.reserved_qty ?? 0);
+  const incomingOf = (itemId: string) =>
+    allLocations
+      ? incoming.filter((r) => r.item_id === itemId).reduce((s, r) => s + Number(r.incoming_qty), 0)
+      : Number(incoming.find((r) => r.item_id === itemId && r.location_id === selectedLocationId)?.incoming_qty ?? 0);
 
   const stocked = items.filter((i) => i.is_stocked).map((i) => {
-    const onHand = Number(i.qty_on_hand);
+    const onHand = onHandOf(i.id, Number(i.qty_on_hand));
+    const valueOnHand = valueOf(i.id, Number(i.value_on_hand));
     const reservedQty = reservedOf(i.id);
     const incomingQty = incomingOf(i.id);
     const available = onHand - reservedQty;
     const projected = available + incomingQty;
-    return { ...i, onHand, reservedQty, incomingQty, available, projected };
+    return { ...i, onHand, valueOnHand, reservedQty, incomingQty, available, projected };
   });
-  const totalValue = stocked.reduce((s, i) => s + Number(i.value_on_hand), 0);
+  const totalValue = stocked.reduce((s, i) => s + i.valueOnHand, 0);
 
   const rows: DataRow[] = stocked.map((i) => ({
     key: i.id,
@@ -63,7 +93,7 @@ export default async function Stock() {
       available: i.available,
       incomingQty: i.incomingQty,
       projected: i.projected,
-      value_on_hand: Number(i.value_on_hand),
+      value_on_hand: i.valueOnHand,
     },
     node: (
       <tr>
@@ -93,7 +123,7 @@ export default async function Stock() {
           {i.incomingQty > 0 ? qty(String(i.incomingQty)) : "—"}
         </td>
         <td className="r">{qty(String(i.projected))}</td>
-        <td className="r">{money(i.value_on_hand)}</td>
+        <td className="r">{money(i.valueOnHand)}</td>
       </tr>
     ),
   }));
@@ -110,6 +140,16 @@ export default async function Stock() {
           both derived, never stored.
         </span>
       </div>
+
+      {reorderableLocations.length > 1 && (
+        <AccountPicker
+          accounts={[{ id: "all", code: "—", name: "All locations" }, ...reorderableLocations]}
+          selectedId={selectedLocationId}
+          basePath="/items/stock"
+          paramName="location"
+          label="Location"
+        />
+      )}
 
       <div className="kpis">
         <div className="kpi">
@@ -129,12 +169,12 @@ export default async function Stock() {
         <div className="kpi">
           <span className="kpi-label"><PackageCheck size={13} /> Incoming</span>
           <span className="kpi-value">{incoming.length}</span>
-          <span className="kpi-note">item{incoming.length === 1 ? "" : "s"} on an open purchase order</span>
+          <span className="kpi-note">item/location pair{incoming.length === 1 ? "" : "s"} on an open purchase order</span>
         </div>
         <div className="kpi">
           <span className="kpi-label"><TrendingDown size={13} /> Reserved</span>
           <span className="kpi-value">{reserved.length}</span>
-          <span className="kpi-note">item{reserved.length === 1 ? "" : "s"} committed to an open sales order</span>
+          <span className="kpi-note">item/location pair{reserved.length === 1 ? "" : "s"} committed to an open sales order</span>
         </div>
       </div>
 
@@ -219,7 +259,10 @@ export default async function Stock() {
         <div className="card">
           <div className="card-head">
             <h2>Stock position</h2>
-            <span className="page-sub">{stocked.length} stocked items</span>
+            <span className="page-sub">
+              {stocked.length} stocked items
+              {!allLocations && ` · ${reorderableLocations.find((l) => l.id === selectedLocationId)?.name ?? ""}`}
+            </span>
           </div>
 
           {stocked.length === 0 ? (
@@ -247,7 +290,7 @@ export default async function Stock() {
               ]}
               footer={
                 <tr>
-                  <td colSpan={9}>Total stock value</td>
+                  <td colSpan={9}>Total stock value{!allLocations ? " at this location" : ""}</td>
                   <td className="r">{money(totalValue)}</td>
                 </tr>
               }

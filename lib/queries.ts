@@ -403,6 +403,14 @@ export async function getStock(companyId: string) {
      order by item_code`;
 }
 
+/** Raw item×location on-hand and value, for pages that filter a company-wide view down to one warehouse. */
+export async function getStockByLocation(companyId: string) {
+  return sql`
+    select item_id, location_id, qty_on_hand, value_on_hand
+      from v_stock_on_hand
+     where company_id = ${companyId}`;
+}
+
 export async function getPartners(companyId: string) {
   return sql`
     select bp.id, bp.code, bp.name, bp.name_my, bp.company_name,
@@ -608,7 +616,7 @@ export async function getStockMovements(companyId: string, itemId: string) {
 export async function getReservedQty(companyId: string) {
   return sql`
     with so_remaining as (
-      select ol.item_id, sum(ol.base_qty - coalesce(d.delivered_qty, 0)) as qty
+      select ol.item_id, ol.location_id, sum(ol.base_qty - coalesce(d.delivered_qty, 0)) as qty
         from document o
         join document_line ol on ol.document_id = o.id
         left join (
@@ -618,11 +626,11 @@ export async function getReservedQty(companyId: string) {
            group by dl.source_line_id
         ) d on d.source_line_id = ol.id
        where o.company_id = ${companyId} and o.doc_type = 'SALES_ORDER' and o.status = 'POSTED'
-       group by ol.item_id
+       group by ol.item_id, ol.location_id
       having sum(ol.base_qty - coalesce(d.delivered_qty, 0)) > 0
     ),
     invoice_pending as (
-      select il.item_id, sum(il.base_qty) as qty
+      select il.item_id, il.location_id, sum(il.base_qty) as qty
         from document inv
         join document_line il on il.document_id = inv.id
        where inv.company_id = ${companyId} and inv.doc_type = 'SALES_INVOICE'
@@ -630,16 +638,16 @@ export async function getReservedQty(companyId: string) {
          and not exists (
            select 1 from document dd where dd.source_document_id = inv.id and dd.doc_type = 'DELIVERY'
          )
-       group by il.item_id
+       group by il.item_id, il.location_id
     )
-    select item_id, sum(qty) as reserved_qty
+    select item_id, location_id, sum(qty) as reserved_qty
       from (select * from so_remaining union all select * from invoice_pending) x
-     group by item_id`;
+     group by item_id, location_id`;
 }
 
 export async function getIncomingQty(companyId: string) {
   return sql`
-    select ol.item_id, sum(ol.base_qty - coalesce(r.received_qty, 0)) as incoming_qty
+    select ol.item_id, ol.location_id, sum(ol.base_qty - coalesce(r.received_qty, 0)) as incoming_qty
       from document o
       join document_line ol on ol.document_id = o.id
       left join (
@@ -649,7 +657,7 @@ export async function getIncomingQty(companyId: string) {
          group by dl.source_line_id
       ) r on r.source_line_id = ol.id
      where o.company_id = ${companyId} and o.doc_type = 'PURCHASE_ORDER' and o.status = 'POSTED'
-     group by ol.item_id
+     group by ol.item_id, ol.location_id
     having sum(ol.base_qty - coalesce(r.received_qty, 0)) > 0`;
 }
 
