@@ -914,16 +914,25 @@ export async function createPurchaseInvoice(_prev: unknown, fd: FormData): Promi
     if (!str(fd, "location_id")) return { error: "Choose a warehouse" };
 
     const goodsReceiptId = str(fd, "goods_receipt_id") || null;
+    const cashOut = num(fd, "cash_out");
+    const dueDate = str(fd, "due_date") || null;
+    const roughTotal = lines.reduce((s, l) => s + l.qty * l.unitPrice, 0);
+
+    // Same reasoning as createSalesInvoice: a null due_date reads as
+    // permanently CURRENT in v_partner_balance/v_open_item, so an invoice
+    // left with a balance owing and no due date could never surface as
+    // overdue on the Payables page no matter how old it got.
+    if (cashOut < roughTotal && !dueDate) return { error: "This invoice leaves a balance owing — add a due date" };
 
     const input = {
       companyId: co,
       partnerId: str(fd, "partner_id"),
       locationId: str(fd, "location_id"),
       docDate: str(fd, "doc_date"),
-      dueDate: str(fd, "due_date") || null,
+      dueDate,
       memo: str(fd, "memo") || null,
       reference: str(fd, "reference") || null,
-      cashOut: num(fd, "cash_out"),
+      cashOut,
       cashAccountId: str(fd, "cash_account_id") || null,
       lines,
     };

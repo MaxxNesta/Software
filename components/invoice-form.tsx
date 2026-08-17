@@ -152,6 +152,7 @@ export function InvoiceForm({
     : [];
 
   const cashOverpaid = !isSales && Number(cashOut) > total;
+  const leavesBalance = !isSales && Number(cashOut) < total;
 
   return (
     <form action={formAction} className="form wide">
@@ -214,8 +215,11 @@ export function InvoiceForm({
                 type="date"
                 value={dueDate}
                 onChange={(e) => setDueDate(e.target.value)}
+                required={leavesBalance}
               />
-              <span className="hint">Filled from payment terms</span>
+              <span className="hint">
+                {leavesBalance ? "Filled from payment terms — required so this can be tracked as overdue" : "Filled from payment terms"}
+              </span>
             </div>
           </div>
         </div>
