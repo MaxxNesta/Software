@@ -18,6 +18,7 @@ const TYPES = [
   ["SALES_RETURN", "Sales returns"],
   ["CUSTOMER_RECEIPT", "Customer receipts"],
   ["STOCK_ADJUSTMENT", "Stock adjustments"],
+  ["STOCK_TRANSFER", "Stock transfers"],
 ];
 
 export default async function DocumentsPage({

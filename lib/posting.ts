@@ -1110,6 +1110,140 @@ export async function postStockAdjustment(input: AdjustmentInput) {
 }
 
 // =========================================================================
+// Stock transfers
+// =========================================================================
+//
+// A move, not a transaction — no partner, no price. document.location_id is
+// the source and to_location_id the destination (see migration 0005). Stock
+// leaves at whatever it was already carried at, FIFO-consumed from the
+// source same as any other issue, and reopens as a fresh lot at the
+// destination at that same cost — a transfer moves stock, it doesn't
+// reprice it. Normally posts nothing to the ledger: the default is one
+// company-wide Inventory account regardless of location, so Dr and Cr would
+// hit the same account and cancel out (same reasoning as Orders posting
+// nothing — see the check constraint on document.status in migration
+// 0005). Only when account_determination actually splits Inventory by
+// location does moving value between warehouses need an entry to keep the
+// balance sheet in step with where it physically sits.
+
+export type TransferLine = { itemId: string; qty: number };
+export type TransferInput = {
+  companyId: string;
+  fromLocationId: string;
+  toLocationId: string;
+  docDate: string;
+  memo?: string | null;
+  reference?: string | null;
+  /** When stock actually arrived at the destination, if more precise than docDate. */
+  receivedAt?: string | null;
+  lines: TransferLine[];
+};
+
+export async function postStockTransfer(input: TransferInput) {
+  const lines = input.lines.filter((l) => l.qty > 0);
+  if (lines.length === 0) throw new Error("A transfer needs at least one line");
+  if (input.fromLocationId === input.toLocationId) throw new Error("Choose two different locations");
+
+  return sql.begin(async (tx) => {
+    const { companyId, fromLocationId, toLocationId, docDate } = input;
+    const receivedAt = input.receivedAt || docDate;
+
+    const fyRows = await tx`select fn_fiscal_year_for(${companyId}, ${docDate}::date) as fy`;
+    const fiscalYear = fyRows[0]?.fy ?? null;
+    if (!fiscalYear) throw new Error(`No fiscal year covers ${docDate}`);
+
+    const noRows = await tx`
+      select fn_next_document_no(${companyId}, 'STOCK_TRANSFER', ${fiscalYear}::uuid) as no`;
+    const docNo = noRows[0].no;
+
+    const [doc] = await tx`
+      insert into document
+        (company_id, doc_type, doc_no, fiscal_year_id, doc_date, posting_date,
+         location_id, to_location_id, currency, exchange_rate, status,
+         net_total, tax_total, gross_total, memo, posted_at, reference)
+      values
+        (${companyId}, 'STOCK_TRANSFER', ${docNo}, ${fiscalYear}, ${docDate}::date,
+         ${docDate}::date, ${fromLocationId}, ${toLocationId}, 'MMK', 1, 'POSTED',
+         0, 0, 0, ${input.memo ?? null}, now(), ${input.reference ?? null})
+      returning id`;
+
+    const journal: JournalLine[] = [];
+    let lineNo = 0;
+    let totalValue = 0;
+
+    for (const line of lines) {
+      lineNo++;
+
+      const [item] = await tx`
+        select id, code, name, is_stocked, base_uom_id from item where id = ${line.itemId}`;
+      if (!item) throw new Error("Item not found");
+      if (!item.is_stocked) throw new Error(`${item.code} (${item.name}) is not stocked and cannot be transferred`);
+
+      const onHandRows = await tx`
+        select fn_qty_on_hand(${companyId}, ${line.itemId}, ${fromLocationId}) as on_hand`;
+      const onHand = Number(onHandRows[0].on_hand);
+      if (onHand < line.qty) {
+        throw new Error(
+          `Not enough ${item.code} (${item.name}) at the source location — ` +
+            `${onHand} on hand, ${line.qty} requested`
+        );
+      }
+
+      const plan = await planFifoConsumption(tx, companyId, line.itemId, fromLocationId, line.qty);
+      const unitCost = plan.unitCost;
+      const totalCost = plan.totalCost;
+      totalValue += totalCost;
+
+      await tx`
+        insert into document_line
+          (company_id, document_id, line_no, item_id, location_id,
+           entered_qty, entered_uom_id, base_qty, unit_price, net_amount, gross_amount)
+        values
+          (${companyId}, ${doc.id}, ${lineNo}, ${line.itemId}, ${fromLocationId},
+           ${line.qty}, ${item.base_uom_id}, ${line.qty}, ${unitCost}, ${totalCost}, ${totalCost})`;
+
+      const [outMovement] = await tx`
+        insert into stock_movement
+          (company_id, item_id, location_id, movement_date, qty, unit_cost, total_cost, document_id)
+        values
+          (${companyId}, ${line.itemId}, ${fromLocationId}, ${docDate}::date,
+           ${-line.qty}, ${unitCost}, ${-totalCost}, ${doc.id})
+        returning id`;
+      await recordFifoConsumption(tx, companyId, outMovement.id, plan);
+
+      const [inMovement] = await tx`
+        insert into stock_movement
+          (company_id, item_id, location_id, movement_date, qty, unit_cost, total_cost, document_id)
+        values
+          (${companyId}, ${line.itemId}, ${toLocationId}, ${docDate}::date,
+           ${line.qty}, ${unitCost}, ${totalCost}, ${doc.id})
+        returning id`;
+      await createFifoLot(tx, companyId, line.itemId, toLocationId, receivedAt, unitCost, line.qty, inMovement.id);
+
+      const [fromAcct] = await tx`
+        select fn_resolve_account_for_item(${companyId}, 'INVENTORY', ${line.itemId}, null, ${fromLocationId}) as a`;
+      const [toAcct] = await tx`
+        select fn_resolve_account_for_item(${companyId}, 'INVENTORY', ${line.itemId}, null, ${toLocationId}) as a`;
+      if (fromAcct.a !== toAcct.a) {
+        journal.push({ accountId: toAcct.a, amount: totalCost, locationId: toLocationId });
+        journal.push({ accountId: fromAcct.a, amount: -totalCost, locationId: fromLocationId });
+      }
+    }
+
+    const entryId = journal.length > 0
+      ? await writeJournal(tx, companyId, docDate, "STOCK_TRANSFER", doc.id, `${docNo} stock transfer`, journal)
+      : null;
+
+    const absValue = round4(Math.abs(totalValue));
+    await tx`
+      update document set journal_entry_id = ${entryId}, net_total = ${absValue}, gross_total = ${absValue}
+       where id = ${doc.id}`;
+
+    return { id: doc.id as string, docNo: docNo as string };
+  });
+}
+
+// =========================================================================
 // Returns
 // =========================================================================
 //

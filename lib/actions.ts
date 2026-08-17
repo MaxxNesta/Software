@@ -9,10 +9,10 @@ import {
   postSalesOrder, postPurchaseOrder, postDelivery, postGoodsReceipt,
   postSupplierPayment, postCustomerReceipt,
   postCashVoucher, postBankVoucher, postJournalVoucher,
-  postCashTransfer, postAccountOpening, postStockAdjustment,
+  postCashTransfer, postAccountOpening, postStockAdjustment, postStockTransfer,
   postSalesReturn, postPurchaseReturn,
   type InvoiceLine, type OrderLine, type FulfillmentLine, type Allocation, type VoucherLine,
-  type AdjustmentLine, type ReturnLine,
+  type AdjustmentLine, type ReturnLine, type TransferLine,
 } from "./posting";
 
 export type ActionResult = { error: string } | { ok: true };
@@ -1949,6 +1949,62 @@ export async function createStockAdjustment(_prev: unknown, fd: FormData): Promi
 
     docId = result.id;
     toastMsg = `Adjustment ${result.docNo} posted`;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  revalidatePath("/documents");
+  revalidatePath("/items");
+  revalidatePath("/items/stock");
+  revalidatePath("/inventory/movements");
+  redirectWithToast(`/documents/${docId}`, toastMsg);
+}
+
+// -------------------------------------------------------- stock transfers --
+
+function parseTransferLines(fd: FormData): TransferLine[] {
+  const raw = String(fd.get("lines") ?? "[]");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("Could not read the lines");
+  }
+  if (!Array.isArray(parsed)) throw new Error("Could not read the lines");
+
+  return parsed
+    .map((l: any) => ({ itemId: String(l.itemId ?? ""), qty: Number(l.qty) }))
+    .filter((l) => l.itemId && l.qty > 0);
+}
+
+export async function createStockTransfer(_prev: unknown, fd: FormData): Promise<ActionResult> {
+  let docId: string;
+  let toastMsg = "Transfer posted";
+
+  try {
+    const co = await companyId();
+    const lines = parseTransferLines(fd);
+
+    if (lines.length === 0) return { error: "Add at least one line with a quantity" };
+    const fromLocationId = str(fd, "from_location_id");
+    const toLocationId = str(fd, "to_location_id");
+    if (!fromLocationId) return { error: "Choose a source warehouse" };
+    if (!toLocationId) return { error: "Choose a destination warehouse" };
+    if (fromLocationId === toLocationId) return { error: "Choose two different warehouses" };
+
+    const result = await postStockTransfer({
+      companyId: co,
+      fromLocationId,
+      toLocationId,
+      docDate: str(fd, "doc_date"),
+      receivedAt: dateTime(fd, "doc_date", "received_time"),
+      memo: str(fd, "memo") || null,
+      reference: str(fd, "reference") || null,
+      lines,
+    });
+
+    docId = result.id;
+    toastMsg = `Transfer ${result.docNo} posted`;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }

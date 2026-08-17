@@ -8,16 +8,17 @@ type Item = PickerItem;
 type Node = { id: string; code: string; segment: string; name: string; parent_id: string | null };
 type Location = { id: string; code: string; name: string };
 type StockRow = { item_id: string; location_id: string; qty_on_hand: string };
-type Line = { key: number; itemId: string; qty: string; unitCost: string };
+type Line = { key: number; itemId: string; qty: string };
 
 const fmt = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 
 /**
- * A correction, not a transaction — damage, shrinkage, or a physical count
- * that disagrees with the ledger. Positive quantity is stock found;
- * negative is stock lost. No partner, because nobody sold or supplied this.
+ * Moves stock between two of the company's own warehouses. No partner, no
+ * price — it leaves the source at whatever it was already carried at and
+ * reopens at the destination at that same cost, so the company-wide total
+ * never moves, only which location holds it.
  */
-export function AdjustmentForm({
+export function StockTransferForm({
   action,
   items: initialItems,
   locations,
@@ -42,8 +43,9 @@ export function AdjustmentForm({
   const [items, setItems] = useState<Item[]>(initialItems);
   const addItem = (i: Item) => setItems((xs) => [...xs, i]);
 
-  const [lines, setLines] = useState<Line[]>([{ key: 1, itemId: "", qty: "", unitCost: "" }]);
-  const [locationId, setLocationId] = useState(locations[0]?.id ?? "");
+  const [lines, setLines] = useState<Line[]>([{ key: 1, itemId: "", qty: "" }]);
+  const [fromLocationId, setFromLocationId] = useState(locations[0]?.id ?? "");
+  const [toLocationId, setToLocationId] = useState(locations[1]?.id ?? locations[0]?.id ?? "");
   const [docDate, setDocDate] = useState(today);
   const [receivedTime, setReceivedTime] = useState("");
 
@@ -53,54 +55,39 @@ export function AdjustmentForm({
 
   const byId = (id: string) => items.find((i) => i.id === id);
 
-  // Company-wide on_hand on Item can say there's stock to remove when this
-  // specific warehouse has none — same reasoning as the sales voucher.
-  const onHandByItem = useMemo(() => {
+  const onHandAtFrom = useMemo(() => {
     const m = new Map<string, number>();
-    for (const r of stockByLocation) if (r.location_id === locationId) m.set(r.item_id, Number(r.qty_on_hand));
+    for (const r of stockByLocation) if (r.location_id === fromLocationId) m.set(r.item_id, Number(r.qty_on_hand));
     return m;
-  }, [stockByLocation, locationId]);
-  const onHandHere = (itemId: string) => onHandByItem.get(itemId) ?? 0;
+  }, [stockByLocation, fromLocationId]);
+  const availableHere = (itemId: string) => onHandAtFrom.get(itemId) ?? 0;
 
   function setLine(key: number, patch: Partial<Line>) {
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
   }
 
   function pickItem(key: number, itemId: string) {
-    const item = byId(itemId);
-    const cost = item ? Number(item.next_cost) : 0;
-    setLine(key, { itemId, unitCost: cost > 0 ? String(cost) : "" });
+    setLine(key, { itemId });
   }
 
   const addLine = () =>
-    setLines((ls) => [...ls, { key: Math.max(0, ...ls.map((l) => l.key)) + 1, itemId: "", qty: "", unitCost: "" }]);
+    setLines((ls) => [...ls, { key: Math.max(0, ...ls.map((l) => l.key)) + 1, itemId: "", qty: "" }]);
 
   const removeLine = (key: number) =>
     setLines((ls) => (ls.length === 1 ? ls : ls.filter((l) => l.key !== key)));
 
-  const isLoss = (l: Line) => Number(l.qty) < 0;
-  const effectiveCost = (l: Line) => {
-    if (isLoss(l)) return Number(byId(l.itemId)?.next_cost ?? 0);
-    return Number(l.unitCost) || 0;
-  };
-  const amount = (l: Line) => (Number(l.qty) || 0) * effectiveCost(l);
-  const total = lines.reduce((s, l) => s + amount(l), 0);
-
   const payload = JSON.stringify(
     lines
-      .filter((l) => l.itemId && Number(l.qty) !== 0)
-      .map((l) => ({
-        itemId: l.itemId,
-        qty: Number(l.qty),
-        unitCost: !isLoss(l) && l.unitCost !== "" ? Number(l.unitCost) : "",
-      }))
+      .filter((l) => l.itemId && Number(l.qty) > 0)
+      .map((l) => ({ itemId: l.itemId, qty: Number(l.qty) }))
   );
 
-  // A loss can't take more than what's on hand at this warehouse.
+  const sameLocation = fromLocationId && toLocationId && fromLocationId === toLocationId;
+
   const shortages = lines.filter((l) => {
-    if (!l.itemId || !isLoss(l)) return false;
+    if (!l.itemId) return false;
     const item = byId(l.itemId);
-    return item?.is_stocked && -Number(l.qty) > onHandHere(l.itemId);
+    return item?.is_stocked && Number(l.qty) > availableHere(l.itemId);
   });
 
   return (
@@ -111,14 +98,24 @@ export function AdjustmentForm({
 
       <div className="card">
         <div className="card-head">
-          <h2>Warehouse and date</h2>
+          <h2>From and to</h2>
         </div>
         <div className="card-body">
           <div className="row">
             <div className="field">
-              <label htmlFor="location_id">Warehouse</label>
-              <select id="location_id" name="location_id" value={locationId}
-                onChange={(e) => setLocationId(e.target.value)} required>
+              <label htmlFor="from_location_id">From warehouse</label>
+              <select id="from_location_id" name="from_location_id" value={fromLocationId}
+                onChange={(e) => setFromLocationId(e.target.value)} required>
+                {locations.map((l) => (
+                  <option key={l.id} value={l.id}>{l.code} · {l.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="field">
+              <label htmlFor="to_location_id">To warehouse</label>
+              <select id="to_location_id" name="to_location_id" value={toLocationId}
+                onChange={(e) => setToLocationId(e.target.value)} required>
                 {locations.map((l) => (
                   <option key={l.id} value={l.id}>{l.code} · {l.name}</option>
                 ))}
@@ -135,14 +132,16 @@ export function AdjustmentForm({
               <label htmlFor="received_time">Time</label>
               <input id="received_time" name="received_time" type="time" value={receivedTime}
                 onChange={(e) => setReceivedTime(e.target.value)} />
-              <span className="hint">For found stock — orders same-day entries correctly for FIFO</span>
+              <span className="hint">When it actually arrived at the destination — orders FIFO correctly</span>
             </div>
 
             <div className="field">
               <label htmlFor="reference">Reference</label>
-              <input id="reference" name="reference" type="text" placeholder="Count sheet, incident no." />
+              <input id="reference" name="reference" type="text" placeholder="Delivery run, driver, vehicle" />
             </div>
           </div>
+
+          {sameLocation && <div className="alert" style={{ marginTop: "0.75rem" }}>Choose two different warehouses.</div>}
         </div>
       </div>
 
@@ -156,16 +155,14 @@ export function AdjustmentForm({
           <table className="linetable">
             <thead>
               <tr>
-                <th>Item</th><th className="r">On hand</th>
-                <th className="r">Qty (+ found / − lost)</th><th className="r">Unit cost</th>
-                <th className="r">Value</th><th />
+                <th>Item</th><th className="r">Available here</th>
+                <th className="r">Qty to move</th><th />
               </tr>
             </thead>
             <tbody>
               {lines.map((l) => {
                 const item = byId(l.itemId);
-                const loss = isLoss(l);
-                const short = loss && item?.is_stocked && -Number(l.qty) > onHandHere(l.itemId);
+                const short = item?.is_stocked && Number(l.qty) > availableHere(l.itemId);
                 return (
                   <tr key={l.key}>
                     <td style={{ minWidth: 240 }}>
@@ -180,32 +177,13 @@ export function AdjustmentForm({
                       />
                     </td>
                     <td className="r" style={{ color: short ? "var(--bad)" : undefined }}>
-                      {item ? (
-                        <>
-                          {fmt(onHandHere(item.id))}
-                          <div style={{ fontSize: "0.72rem", fontWeight: 400, color: "var(--muted)" }}>
-                            {fmt(Number(item.on_hand))} total
-                          </div>
-                        </>
-                      ) : "—"}
+                      {item ? (item.is_stocked ? fmt(availableHere(item.id)) : "service") : "—"}
                     </td>
                     <td className="narrow">
-                      <input type="number" step="any" value={l.qty}
+                      <input type="number" min="0" step="any" value={l.qty}
                         onChange={(e) => setLine(l.key, { qty: e.target.value })}
                         aria-label="Quantity" />
                     </td>
-                    <td className="narrow">
-                      {loss ? (
-                        <span className="m" style={{ color: "var(--muted)" }}>
-                          {fmt(effectiveCost(l))}
-                        </span>
-                      ) : (
-                        <input type="number" min="0" step="any" value={l.unitCost}
-                          onChange={(e) => setLine(l.key, { unitCost: e.target.value })}
-                          aria-label="Unit cost" />
-                      )}
-                    </td>
-                    <td className="r">{fmt(amount(l))}</td>
                     <td className="tight">
                       <button type="button" className="ghost tiny" onClick={() => removeLine(l.key)}
                         aria-label="Remove line" disabled={lines.length === 1}>×</button>
@@ -216,32 +194,33 @@ export function AdjustmentForm({
             </tbody>
           </table>
         </div>
-
-        <div className="totalbar">
-          <span style={{ color: "var(--muted)" }}>Net value</span>
-          <span className="big">{fmt(total)} MMK</span>
-        </div>
       </div>
 
       {shortages.length > 0 && (
         <div className="alert">
-          Not enough stock to remove for{" "}
+          Not enough stock at the source warehouse for{" "}
           {shortages.map((l) => byId(l.itemId)?.code).join(", ")}. Posting will
-          be rejected — reduce the loss quantity.
+          be rejected — reduce the quantity.
         </div>
       )}
 
       <div className="field">
         <label htmlFor="memo">Note</label>
-        <textarea id="memo" name="memo" rows={2} placeholder="What this correction is for — English or Myanmar" />
+        <textarea id="memo" name="memo" rows={2} placeholder="What this move is for — English or Myanmar" />
       </div>
 
       <div className="actions">
-        <button type="submit" disabled={pending || lines.every((l) => !l.itemId || Number(l.qty) === 0) || shortages.length > 0}>
-          {pending ? "Posting…" : "Post adjustment"}
+        <button
+          type="submit"
+          disabled={
+            pending || Boolean(sameLocation) || shortages.length > 0 ||
+            lines.every((l) => !l.itemId || Number(l.qty) <= 0)
+          }
+        >
+          {pending ? "Posting…" : "Post transfer"}
         </button>
         <span className="page-sub">
-          Posts straight to stock and the ledger — Dr/Cr Inventory against the Stock Adjustment account.
+          Leaves the source at its FIFO cost and reopens at the destination at that same cost.
         </span>
       </div>
     </form>

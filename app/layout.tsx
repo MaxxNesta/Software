@@ -105,6 +105,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <NavLink href="/items/stock">Stock overview</NavLink>
               <NavLink href="/inventory/movements">Stock movements</NavLink>
               <NavLink href="/inventory/adjustments">Adjustments</NavLink>
+              <NavLink href="/inventory/transfer">Transfer</NavLink>
             </NavGroup>
 
             <NavGroup label="Master data" icon={<Database size={14} />} match={[
