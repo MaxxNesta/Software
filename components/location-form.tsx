@@ -4,7 +4,7 @@ import { useActionState, useState } from "react";
 import type { ActionResult } from "@/lib/actions";
 
 type Location = { id: string; code: string; name: string; depth: number; is_stock_location: boolean };
-type Kind = "branch" | "warehouse";
+type Kind = "office" | "warehouse";
 
 export function AddLocationForm({
   action,
@@ -21,7 +21,7 @@ export function AddLocationForm({
   const [kind, setKind] = useState<Kind>("warehouse");
   const [parentId, setParentId] = useState("");
 
-  const branches = locations.filter((l) => !l.is_stock_location);
+  const offices = locations.filter((l) => !l.is_stock_location);
 
   if (!open) {
     return (
@@ -53,14 +53,14 @@ export function AddLocationForm({
                   type="radio" name="kind" value="warehouse" checked={kind === "warehouse"}
                   onChange={() => setKind("warehouse")}
                 />
-                Warehouse — holds stock, sits inside a branch
+                Warehouse — holds stock, sits inside an office
               </label>
               <label className="check">
                 <input
-                  type="radio" name="kind" value="branch" checked={kind === "branch"}
-                  onChange={() => setKind("branch")}
+                  type="radio" name="kind" value="office" checked={kind === "office"}
+                  onChange={() => setKind("office")}
                 />
-                Branch — an office or site, doesn&rsquo;t hold stock itself
+                Office — a site that doesn&rsquo;t hold stock itself
               </label>
             </div>
           </div>
@@ -83,16 +83,16 @@ export function AddLocationForm({
 
             {kind === "warehouse" && (
               <div className="field">
-                <label htmlFor="parent_id_select">Branch</label>
+                <label htmlFor="parent_id_select">Office</label>
                 <select id="parent_id_select" value={parentId} onChange={(e) => setParentId(e.target.value)}>
                   <option value="">— none, stands on its own —</option>
-                  {branches.map((l) => (
+                  {offices.map((l) => (
                     <option key={l.id} value={l.id}>{l.code} · {l.name}</option>
                   ))}
                 </select>
                 <span className="hint">
-                  {branches.length === 0
-                    ? "No branches yet — this warehouse won't belong to one, which is fine"
+                  {offices.length === 0
+                    ? "No offices yet — this warehouse won't belong to one, which is fine"
                     : "Which office or site this warehouse belongs to"}
                 </span>
               </div>
@@ -101,7 +101,7 @@ export function AddLocationForm({
 
           <div className="actions" style={{ marginTop: "0.75rem" }}>
             <button type="submit" disabled={pending}>
-              {pending ? "Saving…" : kind === "warehouse" ? "Save warehouse" : "Save branch"}
+              {pending ? "Saving…" : kind === "warehouse" ? "Save warehouse" : "Save office"}
             </button>
           </div>
         </form>

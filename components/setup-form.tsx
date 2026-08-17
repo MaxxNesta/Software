@@ -102,15 +102,15 @@ export function SetupForm({
         <div className="card-body">
           <div className="row">
             <div className="field">
-              <label htmlFor="branch_name">Branch</label>
-              <input id="branch_name" name="branch_name" type="text"
+              <label htmlFor="office_name">Office</label>
+              <input id="office_name" name="office_name" type="text"
                 defaultValue="Head Office" required />
             </div>
             <div className="field">
               <label htmlFor="warehouse_name">Warehouse</label>
               <input id="warehouse_name" name="warehouse_name" type="text"
                 defaultValue="Main Warehouse" required />
-              <span className="hint">Add more branches and warehouses later</span>
+              <span className="hint">Add more offices and warehouses later</span>
             </div>
           </div>
         </div>

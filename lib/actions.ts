@@ -71,7 +71,7 @@ export async function setupCompany(_prev: unknown, fd: FormData): Promise<Action
       baseCurrency: str(fd, "base_currency") || "MMK",
       fiscalYearStartMonth: month,
       fiscalYearStart: start,
-      branchName: str(fd, "branch_name") || "Head Office",
+      officeName: str(fd, "office_name") || "Head Office",
       warehouseName: str(fd, "warehouse_name") || "Main Warehouse",
     });
   } catch (e) {
@@ -1667,7 +1667,7 @@ export async function getFormData() {
           limit 1`,
 
     // Per item, per location — what the company-wide on_hand above can't
-    // show: whether the specific branch making this sale actually has it.
+    // show: whether the specific warehouse making this sale actually has it.
     sql`select item_id, location_id, qty_on_hand from v_stock_on_hand where company_id = ${co}`,
   ]);
 

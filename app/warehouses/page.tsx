@@ -14,7 +14,7 @@ export type LocationNode = Location & { depth: number };
  * Flattened parent-before-children order, each location immediately
  * followed by its own descendants — what makes indentation alone read as a
  * tree, without a separate nested-page structure like Categories has.
- * Locations are few enough (branches and the warehouses inside them, not
+ * Locations are few enough (offices and the warehouses inside them, not
  * hundreds of items) that one page with depth is enough; no separate flat
  * list is needed the way Sub categories exists for items.
  */
@@ -58,9 +58,9 @@ export default async function Warehouses() {
         <span className="eyebrow">Master data</span>
         <h1>Warehouses</h1>
         <span className="page-sub">
-          Branches and the warehouses inside them, shown as one tree — a
-          warehouse (holds stock) always sits inside a branch (an org unit
-          that doesn&rsquo;t hold stock itself).
+          Offices and the warehouses inside them, shown as one tree — a
+          warehouse (holds stock) always sits inside an office (a site that
+          doesn&rsquo;t hold stock itself).
         </span>
       </div>
 

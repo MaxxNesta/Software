@@ -9,7 +9,7 @@ type Location = {
   is_stock_location: boolean; is_active: boolean;
 };
 type LocationNode = Location & { depth: number };
-type Kind = "branch" | "warehouse";
+type Kind = "office" | "warehouse";
 
 // Regular spaces collapse in HTML — a non-breaking space is what actually
 // survives to indent a name, in every browser.
@@ -24,9 +24,9 @@ export function LocationRow({
   deactivateAction,
 }: {
   location: Location;
-  /** How deep this row sits — 0 for a top-level branch, 1 for a warehouse inside it, and so on. */
+  /** How deep this row sits — 0 for a top-level office, 1 for a warehouse inside it, and so on. */
   depth: number;
-  /** Every location in tree order, for the "Branch / parent" picker — includes this row, filtered out below. */
+  /** Every location in tree order, for the Office picker — includes this row, filtered out below. */
   locations: LocationNode[];
   updateAction: (prev: unknown, fd: FormData) => Promise<ActionResult>;
   deleteAction: (prev: unknown, fd: FormData) => Promise<ActionResult>;
@@ -46,9 +46,9 @@ export function LocationRow({
     null
   );
 
-  const [kind, setKind] = useState<Kind>(location.is_stock_location ? "warehouse" : "branch");
+  const [kind, setKind] = useState<Kind>(location.is_stock_location ? "warehouse" : "office");
   const [parentId, setParentId] = useState(location.parent_id ?? "");
-  const branches = locations.filter((l) => !l.is_stock_location && l.id !== location.id);
+  const offices = locations.filter((l) => !l.is_stock_location && l.id !== location.id);
 
   function confirmDelete(e: React.FormEvent<HTMLFormElement>) {
     if (!confirm(`Delete ${location.name}? This can't be undone.`)) e.preventDefault();
@@ -76,10 +76,10 @@ export function LocationRow({
                 </label>
                 <label className="check">
                   <input
-                    type="radio" name="kind" value="branch" checked={kind === "branch"}
-                    onChange={() => setKind("branch")}
+                    type="radio" name="kind" value="office" checked={kind === "office"}
+                    onChange={() => setKind("office")}
                   />
-                  Branch
+                  Office
                 </label>
               </div>
             </div>
@@ -99,10 +99,10 @@ export function LocationRow({
               </div>
               {kind === "warehouse" && (
                 <div className="field">
-                  <label>Branch</label>
+                  <label>Office</label>
                   <select value={parentId} onChange={(e) => setParentId(e.target.value)}>
                     <option value="">— none, stands on its own —</option>
-                    {branches.map((l) => (
+                    {offices.map((l) => (
                       <option key={l.id} value={l.id}>{l.code} · {l.name}</option>
                     ))}
                   </select>
@@ -137,7 +137,7 @@ export function LocationRow({
         {" "}
         {location.is_stock_location
           ? <span className="pill ok">warehouse</span>
-          : <span className="pill">branch</span>}
+          : <span className="pill">office</span>}
       </td>
       <td>{location.is_active ? <span className="pill ok">active</span> : <span className="pill warn">inactive</span>}</td>
       <td>

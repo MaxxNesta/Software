@@ -20,7 +20,7 @@ export type SetupInput = {
   baseCurrency: string;
   fiscalYearStartMonth: number;
   fiscalYearStart: string; // yyyy-mm-dd
-  branchName: string;
+  officeName: string;
   warehouseName: string;
 };
 
@@ -192,13 +192,13 @@ export async function scaffoldCompany(input: SetupInput) {
     }
 
     // ---- locations, units, price levels, tax -----------------------------
-    const [branch] = await tx`
+    const [office] = await tx`
       insert into location (company_id, code, name, is_stock_location)
-      values (${co.id}, 'MAIN', ${input.branchName}, false) returning id`;
+      values (${co.id}, 'MAIN', ${input.officeName}, false) returning id`;
 
     await tx`
       insert into location (company_id, parent_id, code, name, is_stock_location)
-      values (${co.id}, ${branch.id}, 'MAIN-WH', ${input.warehouseName}, true)`;
+      values (${co.id}, ${office.id}, 'MAIN-WH', ${input.warehouseName}, true)`;
 
     await tx`
       insert into uom (company_id, code, name) values
