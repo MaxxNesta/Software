@@ -12,6 +12,7 @@ import {
   getChainDocuments,
   getSettlingPayment,
   isGrirOutstanding,
+  getStockByLocation,
 } from "@/lib/queries";
 import { createDelivery, createGoodsReceipt } from "@/lib/actions";
 import { FulfillOrderForm } from "@/components/fulfill-order-form";
@@ -98,6 +99,7 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
     lineId: string; itemId: string; itemCode: string; itemName: string;
     remainingQty: number; expectedPrice: number;
   }[] = [];
+  let stockByLocation: Array<{ item_id: string; location_id: string; qty_on_hand: string }> = [];
   if (isOpenOrder) {
     const open = doc.doc_type === "SALES_ORDER"
       ? await getOpenSalesOrders(doc.company_id)
@@ -108,6 +110,9 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
         lineId: r.line_id, itemId: r.item_id, itemCode: r.item_code, itemName: r.item_name,
         remainingQty: Number(r.remaining_qty), expectedPrice: Number(r.expected_price ?? 0),
       }));
+    if (doc.doc_type === "SALES_ORDER") {
+      stockByLocation = (await getStockByLocation(doc.company_id)) as never;
+    }
   }
 
   const outstanding = isInvoice ? await getDocumentOutstanding(doc.id) : 0;
@@ -184,6 +189,7 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
           locationId={doc.location_id}
           lines={orderLines}
           action={doc.doc_type === "SALES_ORDER" ? createDelivery : createGoodsReceipt}
+          stockByLocation={doc.doc_type === "SALES_ORDER" ? stockByLocation : undefined}
         />
       )}
 

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { shortDate } from "@/lib/db";
-import { getCompany, getOpenSalesOrders, getPendingDeliveries } from "@/lib/queries";
+import { getCompany, getOpenSalesOrders, getPendingDeliveries, getStockByLocation } from "@/lib/queries";
 import { createDelivery, deliverPendingInvoice } from "@/lib/actions";
 import { FulfillOrderForm } from "@/components/fulfill-order-form";
 import { DeliverNowButton } from "@/components/deliver-now-button";
@@ -9,9 +9,10 @@ export default async function Deliver() {
   const company = await getCompany();
   if (!company) return <div className="empty">No company found.</div>;
 
-  const [openLines, pending] = await Promise.all([
+  const [openLines, pending, stockByLocation] = await Promise.all([
     getOpenSalesOrders(company.id),
     getPendingDeliveries(company.id),
+    getStockByLocation(company.id),
   ]);
 
   const orders = new Map<string, {
@@ -98,6 +99,7 @@ export default async function Deliver() {
             locationId={o.locationId}
             lines={o.lines}
             action={createDelivery}
+            stockByLocation={stockByLocation as never}
           />
         ))
       )}
