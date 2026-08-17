@@ -14,6 +14,7 @@ type Customer = {
 type ItemPrice = { item_id: string; price_level_id: string; price: string };
 type PriceLevel = { id: string; code: string; name: string; sort_order: number };
 type Location = { id: string; code: string; name: string };
+type StockRow = { item_id: string; location_id: string; qty_on_hand: string };
 type Salesman = { id: string; code: string; name: string; name_my: string | null; commission_pct: string };
 type CashAccount = { id: string; code: string; name: string };
 type Promotion = {
@@ -44,7 +45,7 @@ function addDays(iso: string, days: number) {
 export function SalesVoucher({
   action, customers, items: initialItems, locations, salesmen, cashAccounts, promotions,
   focReasons, openInvoices, nextInvoiceNo, today, categories, uoms,
-  itemPrices, priceLevels,
+  itemPrices, priceLevels, stockByLocation,
 }: {
   action: (prev: unknown, fd: FormData) => Promise<ActionResult>;
   customers: Customer[];
@@ -52,6 +53,7 @@ export function SalesVoucher({
   categories: Node[];
   uoms: Uom[];
   locations: Location[];
+  stockByLocation: StockRow[];
   salesmen: Salesman[];
   cashAccounts: CashAccount[];
   promotions: Promotion[];
@@ -74,6 +76,7 @@ export function SalesVoucher({
     { key: 1, itemId: "", qty: "", unitPrice: "", discountPct: "" },
   ]);
   const [customerId, setCustomerId] = useState("");
+  const [locationId, setLocationId] = useState(locations[0]?.id ?? "");
   const [docDate, setDocDate] = useState(today);
   const [dueDate, setDueDate] = useState("");
   const [paymentType, setPaymentType] = useState<"CASH" | "CREDIT">("CREDIT");
@@ -83,6 +86,17 @@ export function SalesVoucher({
   const [tab, setTab] = useState<"invoices" | "promotions">("invoices");
 
   const byId = (id: string) => items.find((i) => i.id === id);
+
+  // What's actually sitting at the selected location — the company-wide
+  // on_hand on Item can show stock as available when the branch making this
+  // sale has none of it, since the server checks availability per location
+  // at posting time regardless of what this form suggests.
+  const onHandByItem = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of stockByLocation) if (r.location_id === locationId) m.set(r.item_id, Number(r.qty_on_hand));
+    return m;
+  }, [stockByLocation, locationId]);
+  const onHandHere = (itemId: string) => onHandByItem.get(itemId) ?? 0;
 
   const customer = customers.find((c) => c.id === customerId);
   const defaultLevelId = priceLevels[0]?.id ?? null;
@@ -211,7 +225,7 @@ export function SalesVoucher({
     : lines.filter((l) => {
         if (!l.itemId) return false;
         const item = byId(l.itemId);
-        return item?.is_stocked && Number(l.qty) + freeQty(l) > Number(item.on_hand);
+        return item?.is_stocked && Number(l.qty) + freeQty(l) > onHandHere(l.itemId);
       });
 
   const customerInvoices = useMemo(
@@ -275,11 +289,13 @@ export function SalesVoucher({
 
             <div className="field">
               <label htmlFor="location_id">Location</label>
-              <select id="location_id" name="location_id" defaultValue={locations[0]?.id ?? ""} required>
+              <select id="location_id" name="location_id" value={locationId}
+                onChange={(e) => setLocationId(e.target.value)} required>
                 {locations.map((l) => (
                   <option key={l.id} value={l.id}>{l.code} · {l.name}</option>
                 ))}
               </select>
+              <span className="hint">Stock leaves from here — On hand below is what&rsquo;s at this location</span>
             </div>
 
             <div className="field">
@@ -332,7 +348,7 @@ export function SalesVoucher({
               {lines.flatMap((l) => {
                 const item = byId(l.itemId);
                 const free = freeQty(l);
-                const short = !toDeliver && item?.is_stocked && Number(l.qty) + free > Number(item.on_hand);
+                const short = !toDeliver && item?.is_stocked && Number(l.qty) + free > onHandHere(l.itemId);
                 const promo = promoFor(l.itemId);
 
                 const freeRow =
@@ -366,7 +382,14 @@ export function SalesVoucher({
                       />
                     </td>
                     <td className="r" style={{ color: short ? "var(--bad)" : undefined }}>
-                      {!item ? "—" : item.is_stocked ? fmt(Number(item.on_hand)) : "service"}
+                      {!item ? "—" : item.is_stocked ? (
+                        <>
+                          {fmt(onHandHere(item.id))}
+                          <div style={{ fontSize: "0.72rem", fontWeight: 400, color: "var(--muted)" }}>
+                            {fmt(Number(item.on_hand))} total
+                          </div>
+                        </>
+                      ) : "service"}
                     </td>
                     <td className="narrow">
                       <input type="number" min="0" step="any" value={l.qty} aria-label="Quantity"

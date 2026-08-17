@@ -1596,7 +1596,7 @@ export async function getFormData() {
   const [
     customers, suppliers, items, locations, groups, uoms,
     salesmen, promotions, cashAccounts, focReasons, itemPrices, priceLevels,
-    openInvoices, nextNo,
+    openInvoices, nextNo, stockByLocation,
   ] = await Promise.all([
     sql`select id, code, name, payment_terms_days, price_level_id from business_partner
          where company_id = ${co} and is_customer and is_active order by code`,
@@ -1665,12 +1665,17 @@ export async function getFormData() {
            from number_series
           where company_id = ${co} and document_type = 'SALES_INVOICE'
           limit 1`,
+
+    // Per item, per location — what the company-wide on_hand above can't
+    // show: whether the specific branch making this sale actually has it.
+    sql`select item_id, location_id, qty_on_hand from v_stock_on_hand where company_id = ${co}`,
   ]);
 
   return {
     customers, suppliers, items, locations, groups, uoms,
     salesmen, promotions, cashAccounts, focReasons, itemPrices, priceLevels, openInvoices,
     nextInvoiceNo: (nextNo[0]?.no as string) ?? "SI-000001",
+    stockByLocation,
   };
 }
 
