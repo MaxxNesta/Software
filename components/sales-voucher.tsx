@@ -293,8 +293,10 @@ export function SalesVoucher({
               <label htmlFor="due_date">Due date</label>
               <input id="due_date" name="due_date" type="date" value={dueDate}
                 onChange={(e) => setDueDate(e.target.value)}
-                disabled={paymentType === "CASH"} />
-              <span className="hint">From payment terms</span>
+                disabled={paymentType === "CASH"} required={paymentType === "CREDIT"} />
+              <span className="hint">
+                {paymentType === "CREDIT" ? "From payment terms — required so this can be tracked as overdue" : "From payment terms"}
+              </span>
             </div>
           </div>
         </div>
