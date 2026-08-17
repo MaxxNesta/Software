@@ -56,9 +56,18 @@ export function FulfillOrderForm({
 
   const onHandHere = (itemId: string) =>
     Number(stockByLocation?.find((r) => r.item_id === itemId && r.location_id === locationId)?.qty_on_hand ?? 0);
+  // Sum across every location, not just this one — a transfer can only ever
+  // move stock the company already has; it can't cover a line short even
+  // once every warehouse is counted, only purchasing more can.
+  const onHandAnywhere = (itemId: string) =>
+    (stockByLocation ?? [])
+      .filter((r) => r.item_id === itemId)
+      .reduce((s, r) => s + Number(r.qty_on_hand), 0);
+
   const shortages = kind === "sales" && stockByLocation
     ? lines.filter((l) => Number(qty[l.lineId]) > onHandHere(l.itemId))
     : [];
+  const shortEverywhere = shortages.filter((l) => Number(qty[l.lineId]) > onHandAnywhere(l.itemId));
 
   const payload = JSON.stringify(
     lines
@@ -143,13 +152,24 @@ export function FulfillOrderForm({
               </table>
             </div>
 
-            {shortages.length > 0 && (
+            {shortEverywhere.length > 0 && (
               <div className="alert">
-                Not enough {shortages.map((l) => l.itemCode).join(", ")} at this location to deliver that much.{" "}
+                The company doesn&rsquo;t have enough {shortEverywhere.map((l) => l.itemCode).join(", ")} anywhere —
+                transferring stock in can&rsquo;t cover this, only buying more can.{" "}
+                <Link href="/purchases/orders/new" style={{ color: "inherit", textDecoration: "underline" }}>
+                  Create purchase order
+                </Link>{" "}
+                first, or lower the quantity to what the company actually has.
+              </div>
+            )}
+            {shortages.length > shortEverywhere.length && (
+              <div className="alert">
+                Not enough {shortages.filter((l) => !shortEverywhere.includes(l)).map((l) => l.itemCode).join(", ")}
+                {" "}at this location to deliver that much, though the company has it elsewhere.{" "}
                 <Link href="/inventory/transfer" style={{ color: "inherit", textDecoration: "underline" }}>
                   Transfer stock in
                 </Link>{" "}
-                first, or lower the quantity to what&rsquo;s available.
+                first, or lower the quantity to what&rsquo;s available here.
               </div>
             )}
 
