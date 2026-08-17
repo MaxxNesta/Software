@@ -151,7 +151,10 @@ section { display: flex; flex-direction: column; gap: var(--s3); }
   padding: var(--s3);
   display: flex; flex-direction: column; gap: var(--s1);
 }
-.kpi-label { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.kpi-label {
+  font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--muted); display: inline-flex; align-items: center; gap: 0.35rem;
+}
 .kpi-value { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 1.35rem; letter-spacing: -0.02em; }
 .kpi-note { font-size: 0.78rem; color: var(--muted); }
 .kpi-value.pos { color: var(--dr); }
@@ -179,6 +182,7 @@ thead th {
 }
 tbody tr:last-child td { border-bottom: none; }
 tbody tr.link:hover { background: var(--line-soft); cursor: pointer; }
+.activity-row:hover { background: var(--line-soft); }
 td.r, th.r { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); }
 td.code { font-family: var(--mono); font-size: 0.82rem; }
 td.wrap { white-space: normal; }

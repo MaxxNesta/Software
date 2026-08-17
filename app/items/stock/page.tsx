@@ -1,6 +1,7 @@
 import Link from "next/link";
+import { Boxes, PackageCheck, TrendingDown, AlertTriangle } from "lucide-react";
 import { money, qty } from "@/lib/db";
-import { getCompany, getItems, getReservedQty, getIncomingQty } from "@/lib/queries";
+import { getCompany, getItems, getReservedQty, getIncomingQty, getLowStock } from "@/lib/queries";
 import { DataTable, type DataRow } from "@/components/data-table";
 
 type Row = {
@@ -13,10 +14,14 @@ export default async function Stock() {
   const company = await getCompany();
   if (!company) return <div className="empty">No company found.</div>;
 
-  const [items, reserved, incoming] = await Promise.all([
+  const [items, reserved, incoming, lowStock] = await Promise.all([
     getItems(company.id) as unknown as Promise<Row[]>,
     getReservedQty(company.id) as unknown as Promise<Array<{ item_id: string; reserved_qty: string }>>,
     getIncomingQty(company.id) as unknown as Promise<Array<{ item_id: string; incoming_qty: string }>>,
+    getLowStock(company.id) as unknown as Promise<Array<{
+      item_id: string; item_code: string; item_name: string;
+      location_id: string; location_code: string; qty_on_hand: string; min_qty: string;
+    }>>,
   ]);
 
   const reservedOf = (id: string) => Number(reserved.find((r) => r.item_id === id)?.reserved_qty ?? 0);
@@ -92,6 +97,68 @@ export default async function Stock() {
           both derived, never stored.
         </span>
       </div>
+
+      <div className="kpis">
+        <div className="kpi">
+          <span className="kpi-label"><Boxes size={13} /> Stock value</span>
+          <span className="kpi-value">{money(totalValue)}</span>
+          <span className="kpi-note">{stocked.length} stocked item{stocked.length === 1 ? "" : "s"}</span>
+        </div>
+        <div className="kpi">
+          <span className="kpi-label"><AlertTriangle size={13} /> Low stock</span>
+          <span className="kpi-value" style={{ color: lowStock.length > 0 ? "var(--bad)" : undefined }}>
+            {lowStock.length}
+          </span>
+          <span className="kpi-note">
+            item/location pair{lowStock.length === 1 ? "" : "s"} below reorder point
+          </span>
+        </div>
+        <div className="kpi">
+          <span className="kpi-label"><PackageCheck size={13} /> Incoming</span>
+          <span className="kpi-value">{incoming.length}</span>
+          <span className="kpi-note">item{incoming.length === 1 ? "" : "s"} on an open purchase order</span>
+        </div>
+        <div className="kpi">
+          <span className="kpi-label"><TrendingDown size={13} /> Reserved</span>
+          <span className="kpi-value">{reserved.length}</span>
+          <span className="kpi-note">item{reserved.length === 1 ? "" : "s"} committed to an open sales order</span>
+        </div>
+      </div>
+
+      {lowStock.length > 0 && (
+        <section>
+          <div className="card">
+            <div className="card-head">
+              <h2>Low stock</h2>
+              <span className="page-sub">below the reorder point set on that item and location</span>
+            </div>
+            <div className="tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Code</th><th>Item</th><th>Location</th>
+                    <th className="r">On hand</th><th className="r">Reorder point</th><th className="r">Short by</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lowStock.map((r) => (
+                    <tr key={`${r.item_id}-${r.location_id}`}>
+                      <td className="code">{r.item_code}</td>
+                      <td className="wrap">{r.item_name}</td>
+                      <td className="code">{r.location_code}</td>
+                      <td className="r">{qty(r.qty_on_hand)}</td>
+                      <td className="r">{qty(r.min_qty)}</td>
+                      <td className="r" style={{ color: "var(--bad)" }}>
+                        {qty(String(Number(r.min_qty) - Number(r.qty_on_hand)))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      )}
 
       <section>
         <div className="card">

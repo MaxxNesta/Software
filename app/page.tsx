@@ -1,18 +1,27 @@
 import Link from "next/link";
-import { money, shortDate } from "@/lib/db";
-import { getCompany, getKpis, getHealth, getAging, getDocuments, getStock, getActionItems } from "@/lib/queries";
+import { Boxes, Receipt, Wallet, Banknote, AlertTriangle, Package } from "lucide-react";
+import { money } from "@/lib/db";
+import {
+  getCompany, getKpis, getHealth, getAging, getDocuments, getStock, getActionItems,
+  getRevenueTrend, getTopItems, getTopCustomers,
+} from "@/lib/queries";
+import { RevenueTrendChart, RankedBarChart } from "@/components/charts";
+import { ActivityFeed, type ActivityDoc } from "@/components/activity-feed";
 
 export default async function Dashboard() {
   const company = await getCompany();
   if (!company) return <div className="empty">No company found. Run <span className="m">npm run db:seed</span>.</div>;
 
-  const [kpis, health, aging, docs, stock, actionItems] = await Promise.all([
+  const [kpis, health, aging, docs, stock, actionItems, revenueTrend, topItems, topCustomers] = await Promise.all([
     getKpis(company.id),
     getHealth(company.id),
     getAging(company.id),
     getDocuments(company.id),
     getStock(company.id),
     getActionItems(company.id),
+    getRevenueTrend(company.id),
+    getTopItems(company.id),
+    getTopCustomers(company.id),
   ]);
 
   const healthy = health.unbalanced === 0 && health.inventoryBreaks === 0 && health.trialBalance === 0;
@@ -68,34 +77,34 @@ export default async function Dashboard() {
 
       <div className="kpis">
         <div className="kpi">
-          <span className="kpi-label">Stock value</span>
+          <span className="kpi-label"><Boxes size={13} /> Stock value</span>
           <span className="kpi-value">{money(kpis.stock.value)}</span>
           <span className="kpi-note">{money(kpis.stock.qty)} units on hand</span>
         </div>
         <div className="kpi">
-          <span className="kpi-label">Receivables</span>
+          <span className="kpi-label"><Receipt size={13} /> Receivables</span>
           <span className="kpi-value">{money(kpis.ar.total)}</span>
           <span className="kpi-note">{kpis.ar.n} open invoice{kpis.ar.n === 1 ? "" : "s"}</span>
         </div>
         <div className="kpi">
-          <span className="kpi-label">Payables</span>
+          <span className="kpi-label"><Wallet size={13} /> Payables</span>
           <span className="kpi-value">{money(kpis.ap.total)}</span>
           <span className="kpi-note">{kpis.ap.n} open bill{kpis.ap.n === 1 ? "" : "s"}</span>
         </div>
         <div className="kpi">
-          <span className="kpi-label">Cash at bank</span>
+          <span className="kpi-label"><Banknote size={13} /> Cash at bank</span>
           <span className="kpi-value">{money(kpis.cash.total)}</span>
           <span className="kpi-note">cash and KBZ</span>
         </div>
         <div className="kpi">
-          <span className="kpi-label">Overdue</span>
+          <span className="kpi-label"><AlertTriangle size={13} /> Overdue</span>
           <span className="kpi-value" style={{ color: Number(kpis.overdue.total) > 0 ? "var(--bad)" : undefined }}>
             {money(kpis.overdue.total)}
           </span>
           <span className="kpi-note">{kpis.overdue.n} invoice{kpis.overdue.n === 1 ? "" : "s"} past due</span>
         </div>
         <div className="kpi">
-          <span className="kpi-label">Goods received, not invoiced</span>
+          <span className="kpi-label"><Package size={13} /> Goods received, not invoiced</span>
           <span className="kpi-value">{money(Math.abs(kpis.grirReceipts.total))}</span>
           <span className="kpi-note">
             {kpis.grirReceipts.n} receipt{kpis.grirReceipts.n === 1 ? "" : "s"} awaiting a supplier invoice
@@ -135,6 +144,56 @@ export default async function Dashboard() {
                   </Link>
                 ))}
               </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <div className="grid2">
+        <section>
+          <div className="card">
+            <div className="card-head">
+              <h2>Revenue, last 6 months</h2>
+            </div>
+            <div className="card-body">
+              <RevenueTrendChart data={revenueTrend as never} />
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <div className="card">
+            <div className="card-head">
+              <h2>Top-selling items</h2>
+              <span className="page-sub">by revenue, last 6 months</span>
+            </div>
+            <div className="card-body">
+              {topItems.length === 0 ? (
+                <div className="empty">No sales invoices yet.</div>
+              ) : (
+                <RankedBarChart
+                  data={(topItems as any[]).map((i) => ({ label: i.name, value: i.revenue }))}
+                />
+              )}
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section>
+        <div className="card">
+          <div className="card-head">
+            <h2>Top customers</h2>
+            <span className="page-sub">by revenue, last 6 months</span>
+          </div>
+          <div className="card-body">
+            {topCustomers.length === 0 ? (
+              <div className="empty">No sales invoices yet.</div>
+            ) : (
+              <RankedBarChart
+                data={(topCustomers as any[]).map((c) => ({ label: c.name, value: c.revenue }))}
+                height={Math.max(120, (topCustomers as any[]).length * 34)}
+              />
             )}
           </div>
         </div>
@@ -226,32 +285,11 @@ export default async function Dashboard() {
       <section>
         <div className="card">
           <div className="card-head">
-            <h2>Recent documents</h2>
+            <h2>Recent activity</h2>
             <Link href="/documents" className="m" style={{ color: "var(--dr)" }}>View all →</Link>
           </div>
-          <div className="tablewrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Document</th><th>Type</th><th>Partner</th><th>Date</th>
-                  <th>From</th><th className="r">Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {docs.slice(0, 10).map((d: any) => (
-                  <tr key={d.id} className="link">
-                    <td className="code">
-                      <Link href={`/documents/${d.id}`} style={{ color: "var(--dr)" }}>{d.doc_no ?? "—"}</Link>
-                    </td>
-                    <td className="m">{d.doc_type.replace(/_/g, " ").toLowerCase()}</td>
-                    <td className="wrap">{d.partner_name ?? "—"}</td>
-                    <td className="code">{shortDate(d.posting_date)}</td>
-                    <td className="code">{d.source_doc_no ?? "—"}</td>
-                    <td className="r">{money(d.gross_total)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="card-body">
+            <ActivityFeed docs={docs.slice(0, 10) as unknown as ActivityDoc[]} />
           </div>
         </div>
       </section>

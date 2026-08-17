@@ -186,7 +186,7 @@ export async function getOpenItems(companyId: string, docType: string) {
 export async function getDocuments(companyId: string, docType?: string, openGrirOnly?: boolean) {
   return sql`
     select d.id, d.doc_type, d.doc_no, d.doc_date, d.posting_date, d.due_date,
-           d.status, d.gross_total, d.currency,
+           d.status, d.gross_total, d.currency, d.posted_at,
            p.name  as partner_name,
            l.code  as location_code,
            src.doc_no as source_doc_no,
@@ -693,6 +693,92 @@ export async function getIncomeStatement(companyId: string, from: string, to: st
      group by a.id, a.code, a.name, a.account_type
     having sum(jl.base_amount) <> 0
      order by a.account_type, a.code`;
+}
+
+/**
+ * Revenue by calendar month for the trailing `months` months, including
+ * months with no postings at all — a chart needs the empty gaps to show a
+ * true trend rather than silently compressing the x-axis to whichever
+ * months happened to have activity.
+ */
+export async function getRevenueTrend(companyId: string, months: number = 6) {
+  return sql`
+    with months as (
+      select date_trunc('month', current_date) - (n || ' months')::interval as month
+        from generate_series(0, ${months} - 1) as n
+    ),
+    monthly_revenue as (
+      select date_trunc('month', je.entry_date) as month,
+             sum(-jl.base_amount) as revenue
+        from journal_line jl
+        join journal_entry je on je.id = jl.journal_entry_id
+        join account a on a.id = jl.account_id
+       where jl.company_id = ${companyId}
+         and a.account_type = 'REVENUE'
+       group by date_trunc('month', je.entry_date)
+    )
+    select to_char(m.month, 'YYYY-MM') as month, coalesce(r.revenue, 0) as revenue
+      from months m
+      left join monthly_revenue r on r.month = m.month
+     order by m.month`;
+}
+
+/** Best-selling items by revenue over the trailing `months` months, sales invoices only (returns not netted out). */
+export async function getTopItems(companyId: string, months: number = 6, limit: number = 6) {
+  return sql`
+    select i.id, i.code, i.name,
+           sum(dl.base_qty) as qty,
+           sum(dl.net_amount) as revenue
+      from document_line dl
+      join document d on d.id = dl.document_id
+      join item i on i.id = dl.item_id
+     where d.company_id = ${companyId}
+       and d.doc_type = 'SALES_INVOICE'
+       and d.status = 'POSTED'
+       and d.posting_date >= date_trunc('month', current_date) - (${months} - 1 || ' months')::interval
+     group by i.id, i.code, i.name
+     order by revenue desc
+     limit ${limit}`;
+}
+
+/** Best customers by revenue over the trailing `months` months, sales invoices only. */
+export async function getTopCustomers(companyId: string, months: number = 6, limit: number = 6) {
+  return sql`
+    select p.id, p.code, p.name,
+           sum(d.net_total) as revenue,
+           count(*)::int as invoices
+      from document d
+      join business_partner p on p.id = d.partner_id
+     where d.company_id = ${companyId}
+       and d.doc_type = 'SALES_INVOICE'
+       and d.status = 'POSTED'
+       and d.posting_date >= date_trunc('month', current_date) - (${months} - 1 || ' months')::interval
+     group by p.id, p.code, p.name
+     order by revenue desc
+     limit ${limit}`;
+}
+
+/**
+ * Item/location pairs sitting below their reorder point. item_reorder rows
+ * with no min_qty set are not a low-stock rule, just an unused row — and a
+ * location with no stock_movement at all has no v_stock_on_hand row, which
+ * reads as genuinely zero on hand rather than "unknown".
+ */
+export async function getLowStock(companyId: string) {
+  return sql`
+    select i.id as item_id, i.code as item_code, i.name as item_name,
+           l.id as location_id, l.code as location_code,
+           coalesce(s.qty_on_hand, 0) as qty_on_hand,
+           r.min_qty
+      from item_reorder r
+      join item i on i.id = r.item_id
+      join location l on l.id = r.location_id
+      left join v_stock_on_hand s
+        on s.item_id = r.item_id and s.location_id = r.location_id and s.company_id = r.company_id
+     where r.company_id = ${companyId}
+       and r.min_qty is not null
+       and coalesce(s.qty_on_hand, 0) < r.min_qty
+     order by (r.min_qty - coalesce(s.qty_on_hand, 0)) desc`;
 }
 
 /**
