@@ -276,6 +276,41 @@ export async function getOpenPurchaseInvoices(companyId: string) {
      limit 200`;
 }
 
+/**
+ * Deliveries no sales invoice has been written against yet — the sales-side
+ * mirror of getOpenGoodsReceipts, for when stock left before the bill did.
+ * Unlike a goods receipt, a delivery carries no price (it moves stock at
+ * cost, not at what the customer is charged), so lines here have no
+ * unitPrice — the invoice looks that up the normal way, from item_price.
+ *
+ * The link runs in whichever direction each path actually wrote it: a
+ * delivery composed atomically with its invoice (postSaleWithDelivery) has
+ * the invoice's source_document_id point at the delivery, but one fulfilling
+ * a "deliver later" invoice (deliverPendingInvoice) has the delivery's own
+ * source_document_id point at the invoice instead — checking only one
+ * direction would wrongly offer to re-invoice an already-billed delivery.
+ */
+export async function getOpenDeliveries(companyId: string) {
+  return sql`
+    select d.id, d.doc_no, d.doc_date, d.partner_id, d.location_id,
+           coalesce(json_agg(json_build_object(
+             'itemId', dl.item_id, 'itemCode', i.code, 'itemName', i.name,
+             'qty', dl.base_qty
+           ) order by dl.line_no), '[]') as lines
+      from document d
+      join document_line dl on dl.document_id = d.id
+      join item i on i.id = dl.item_id
+     where d.company_id = ${companyId} and d.doc_type = 'DELIVERY' and d.status = 'POSTED'
+       and not exists (
+         select 1 from document si
+          where si.doc_type = 'SALES_INVOICE' and si.status = 'POSTED'
+            and (si.source_document_id = d.id or d.source_document_id = si.id)
+       )
+     group by d.id, d.doc_no, d.doc_date, d.partner_id, d.location_id
+     order by d.doc_date desc, d.doc_no desc
+     limit 200`;
+}
+
 export async function getDocument(id: string) {
   const [doc] = await sql`
     select d.*, p.name as partner_name, p.code as partner_code,

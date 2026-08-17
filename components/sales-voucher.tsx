@@ -29,6 +29,8 @@ type OpenInvoice = {
   posting_date: string; due_date: string | null;
   gross_total: string; outstanding: string; aging_bucket: string;
 };
+type MatchLine = { itemId: string; itemCode: string; itemName: string; qty: number };
+type OpenDelivery = { id: string; doc_no: string; doc_date: string; partner_id: string; location_id: string; lines: MatchLine[] };
 
 type Line = { key: number; itemId: string; qty: string; unitPrice: string; discountPct: string };
 
@@ -45,7 +47,7 @@ function addDays(iso: string, days: number) {
 export function SalesVoucher({
   action, customers, items: initialItems, locations, salesmen, cashAccounts, promotions,
   focReasons, openInvoices, nextInvoiceNo, today, categories, uoms,
-  itemPrices, priceLevels, stockByLocation,
+  itemPrices, priceLevels, stockByLocation, deliveries, initialDeliveryId,
 }: {
   action: (prev: unknown, fd: FormData) => Promise<ActionResult>;
   customers: Customer[];
@@ -63,6 +65,10 @@ export function SalesVoucher({
   openInvoices: OpenInvoice[];
   nextInvoiceNo: string;
   today: string;
+  /** Deliveries with no invoice against them yet, so a standalone delivery can be billed after the fact. */
+  deliveries?: OpenDelivery[];
+  /** Arrived via "Create sales invoice" on a specific delivery's own page — match it immediately. */
+  initialDeliveryId?: string;
 }) {
   const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
     action as never, null
@@ -77,6 +83,7 @@ export function SalesVoucher({
   ]);
   const [customerId, setCustomerId] = useState("");
   const [locationId, setLocationId] = useState(locations[0]?.id ?? "");
+  const [matchedDeliveryId, setMatchedDeliveryId] = useState("");
   const [docDate, setDocDate] = useState(today);
   const [dueDate, setDueDate] = useState("");
   const [paymentType, setPaymentType] = useState<"CASH" | "CREDIT">("CREDIT");
@@ -146,6 +153,34 @@ export function SalesVoucher({
       })
     );
   }
+
+  const openDeliveries = (deliveries ?? []).filter((d) => d.partner_id === customerId);
+
+  function matchDelivery(id: string) {
+    setMatchedDeliveryId(id);
+    const d = (deliveries ?? []).find((x) => x.id === id);
+    if (!d) return;
+    setCustomerId(d.partner_id);
+    setLocationId(d.location_id);
+    setToDeliver(false); // stock already left — "deliver later" no longer applies
+    // Delivery lines carry no price — they moved stock at cost, not at what
+    // the customer is charged — so this still looks the price up normally.
+    setLines(
+      d.lines.map((l, idx) => {
+        const p = priceFor(l.itemId);
+        return { key: idx + 1, itemId: l.itemId, qty: String(l.qty), unitPrice: p > 0 ? String(p) : "", discountPct: "" };
+      })
+    );
+  }
+
+  // Arrived from a specific delivery's own page — its customer isn't chosen
+  // yet at this point, so this searches the full list rather than
+  // openDeliveries (which only exists once a customer is picked).
+  useEffect(() => {
+    if (!initialDeliveryId) return;
+    matchDelivery(initialDeliveryId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialDeliveryId]);
 
   const addLine = () =>
     setLines((ls) => [
@@ -219,8 +254,9 @@ export function SalesVoucher({
 
   // Availability must cover the free units too — they leave the warehouse.
   // Only matters when goods leave now; a deferred delivery doesn't touch
-  // stock at invoice time, so nothing to check against yet.
-  const shortages = toDeliver
+  // stock at invoice time, and a matched delivery already moved it, so
+  // neither has anything left to check against.
+  const shortages = toDeliver || matchedDeliveryId
     ? []
     : lines.filter((l) => {
         if (!l.itemId) return false;
@@ -326,6 +362,35 @@ export function SalesVoucher({
         </div>
       </div>
 
+      {(deliveries?.length ?? 0) > 0 && (
+        <div className="card">
+          <div className="card-head">
+            <h2>Matching</h2>
+          </div>
+          <div className="card-body">
+            <div className="field">
+              <label htmlFor="delivery_id">Match existing delivery</label>
+              <select id="delivery_id" name="delivery_id" value={matchedDeliveryId}
+                onChange={(e) => matchDelivery(e.target.value)} disabled={!customerId}>
+                <option value="">
+                  {customerId ? "Not matched — invoice fresh, or deliver later" : "Choose a customer first"}
+                </option>
+                {openDeliveries.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.doc_no} · {String(d.doc_date).slice(0, 10)} · {d.lines.length} line{d.lines.length === 1 ? "" : "s"}
+                  </option>
+                ))}
+              </select>
+              <span className="hint">
+                {matchedDeliveryId
+                  ? "Lines are filled from this delivery, priced normally — stock already left, so Fulfilment below no longer applies."
+                  : "Stock already left and just needs its invoice written — pick which delivery this is for."}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="card">
         <div className="card-head">
           <h2>Items</h2>
@@ -348,7 +413,7 @@ export function SalesVoucher({
               {lines.flatMap((l) => {
                 const item = byId(l.itemId);
                 const free = freeQty(l);
-                const short = !toDeliver && item?.is_stocked && Number(l.qty) + free > onHandHere(l.itemId);
+                const short = !toDeliver && !matchedDeliveryId && item?.is_stocked && Number(l.qty) + free > onHandHere(l.itemId);
                 const promo = promoFor(l.itemId);
 
                 const freeRow =
@@ -448,30 +513,37 @@ export function SalesVoucher({
               </div>
             </div>
 
-            <div style={{ marginTop: "1rem" }}>
-              <label style={{ display: "block", marginBottom: "0.5rem" }}>Fulfilment</label>
-              <div className="row">
-                <label className="check" style={{ alignItems: "flex-start" }}>
-                  <input type="radio" name="fulfilment" checked={!toDeliver}
-                    onChange={() => setToDeliver(false)} style={{ marginTop: "0.2rem" }} />
-                  <span>
-                    <div>Take now</div>
-                    <span className="hint">Goods leave immediately — delivery and invoice post together</span>
-                  </span>
-                </label>
-                <label className="check" style={{ alignItems: "flex-start" }}>
-                  <input type="radio" name="fulfilment" checked={toDeliver}
-                    onChange={() => setToDeliver(true)} style={{ marginTop: "0.2rem" }} />
-                  <span>
-                    <div>Deliver later</div>
-                    <span className="hint">
-                      Revenue posts now; stock leaves later from Sales → Deliveries
-                    </span>
-                  </span>
-                </label>
+            {matchedDeliveryId ? (
+              <div style={{ marginTop: "1rem" }}>
+                <label style={{ display: "block", marginBottom: "0.5rem" }}>Fulfilment</label>
+                <span className="hint">Stock already left with this delivery — this invoice only records revenue.</span>
               </div>
-              {toDeliver && <input type="hidden" name="to_deliver" value="on" />}
-            </div>
+            ) : (
+              <div style={{ marginTop: "1rem" }}>
+                <label style={{ display: "block", marginBottom: "0.5rem" }}>Fulfilment</label>
+                <div className="row">
+                  <label className="check" style={{ alignItems: "flex-start" }}>
+                    <input type="radio" name="fulfilment" checked={!toDeliver}
+                      onChange={() => setToDeliver(false)} style={{ marginTop: "0.2rem" }} />
+                    <span>
+                      <div>Take now</div>
+                      <span className="hint">Goods leave immediately — delivery and invoice post together</span>
+                    </span>
+                  </label>
+                  <label className="check" style={{ alignItems: "flex-start" }}>
+                    <input type="radio" name="fulfilment" checked={toDeliver}
+                      onChange={() => setToDeliver(true)} style={{ marginTop: "0.2rem" }} />
+                    <span>
+                      <div>Deliver later</div>
+                      <span className="hint">
+                        Revenue posts now; stock leaves later from Sales → Deliveries
+                      </span>
+                    </span>
+                  </label>
+                </div>
+                {toDeliver && <input type="hidden" name="to_deliver" value="on" />}
+              </div>
+            )}
 
             <div className="totalbar" style={{ marginTop: "0.5rem", paddingRight: 0 }}>
               <span style={{ color: "var(--muted)" }}>Balance on account</span>

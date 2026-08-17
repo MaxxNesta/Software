@@ -95,6 +95,11 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
   const needsInvoiceMatch = isGr && grirOutstanding;
   const needsReceiptMatch = isPi && grirOutstanding;
 
+  // A delivery with no invoice against it yet — the sales-side mirror of
+  // needsInvoiceMatch, just off the chain link itself rather than a
+  // clearing-account view, since a delivery never touches GR/IR.
+  const needsSalesInvoice = doc.doc_type === "DELIVERY" && doc.status === "POSTED" && !stageDoc["SALES_INVOICE"];
+
   let orderLines: {
     lineId: string; itemId: string; itemCode: string; itemName: string;
     remainingQty: number; expectedPrice: number;
@@ -149,6 +154,15 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
               ? "Nothing has billed for this receipt yet."
               : "Nothing has recorded these goods arriving yet."}
           </span>
+        </div>
+      )}
+
+      {needsSalesInvoice && (
+        <div className="actions" style={{ marginTop: "-0.5rem" }}>
+          <Link href={`/sales/new?delivery_id=${doc.id}`} className="btn">
+            Create sales invoice — {money(doc.gross_total)}
+          </Link>
+          <span className="page-sub">Nothing has billed for this delivery yet.</span>
         </div>
       )}
 

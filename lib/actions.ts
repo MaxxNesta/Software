@@ -858,6 +858,7 @@ export async function createSalesInvoice(_prev: unknown, fd: FormData): Promise<
     const dueDate = str(fd, "due_date") || null;
     const cashIn = num(fd, "cash_in");
     const toDeliver = fd.get("to_deliver") !== null;
+    const deliveryId = str(fd, "delivery_id") || null;
     const roughTotal = lines.reduce((s, l) => s + l.qty * l.unitPrice, 0);
 
     // An invoice left with no due date can never be flagged overdue no
@@ -883,10 +884,16 @@ export async function createSalesInvoice(_prev: unknown, fd: FormData): Promise<
       lines,
     };
 
-    // Checking "to deliver" defers the delivery — this posts revenue only,
-    // and stock leaves later when someone fulfils it. Left unchecked, the
-    // goods leave right now: delivery and invoice post together.
-    const result = toDeliver ? await postSalesInvoice(input) : await postSaleWithDelivery(input);
+    // Three ways this can go, mirroring purchases: matched to a delivery
+    // that already moved the stock (nothing should move it again); deferred
+    // (revenue only, a real delivery fulfils it later); or "take now"
+    // (delivery and invoice post together). Matching and deferring are
+    // mutually exclusive — the form only shows one at a time.
+    const result = deliveryId
+      ? await postSalesInvoice({ ...input, deliveryId })
+      : toDeliver
+        ? await postSalesInvoice(input)
+        : await postSaleWithDelivery(input);
 
     docId = result.id;
     toastMsg = `Invoice ${result.docNo} posted`;
