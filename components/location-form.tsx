@@ -3,7 +3,16 @@
 import { useActionState, useState } from "react";
 import type { ActionResult } from "@/lib/actions";
 
-type Location = { id: string; code: string; name: string };
+type Location = { id: string; code: string; name: string; depth: number; is_stock_location: boolean };
+
+// Regular spaces collapse in HTML — a non-breaking space is what actually
+// survives to indent a native <option>, in every browser.
+const NBSP = " ";
+
+function parentOptionLabel(l: Location) {
+  return `${NBSP.repeat(l.depth * 2)}${l.depth > 0 ? "└ " : ""}${l.code} · ${l.name}` +
+    (l.is_stock_location ? " (warehouse)" : " (branch)");
+}
 
 export function AddLocationForm({
   action,
@@ -56,7 +65,7 @@ export function AddLocationForm({
               <select id="parent_id" name="parent_id" defaultValue="">
                 <option value="">— none, top level —</option>
                 {locations.map((l) => (
-                  <option key={l.id} value={l.id}>{l.code} · {l.name}</option>
+                  <option key={l.id} value={l.id}>{parentOptionLabel(l)}</option>
                 ))}
               </select>
             </div>

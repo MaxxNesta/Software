@@ -8,16 +8,30 @@ type Location = {
   parent_id: string | null; parent_name: string | null;
   is_stock_location: boolean; is_active: boolean;
 };
+type LocationNode = Location & { depth: number };
+
+// Regular spaces collapse in HTML — a non-breaking space ( ) is what
+// actually survives to indent a name or a native <option>, in every browser.
+const NBSP = " ";
+
+function parentOptionLabel(l: LocationNode) {
+  return `${NBSP.repeat(l.depth * 2)}${l.depth > 0 ? "└ " : ""}${l.code} · ${l.name}` +
+    (l.is_stock_location ? " (warehouse)" : " (branch)");
+}
 
 export function LocationRow({
   location,
+  depth,
   locations,
   updateAction,
   deleteAction,
   deactivateAction,
 }: {
   location: Location;
-  locations: Location[];
+  /** How deep this row sits — 0 for a top-level branch, 1 for a warehouse inside it, and so on. */
+  depth: number;
+  /** Every location in tree order, for the "Branch / parent" picker — includes this row, filtered out below. */
+  locations: LocationNode[];
   updateAction: (prev: unknown, fd: FormData) => Promise<ActionResult>;
   deleteAction: (prev: unknown, fd: FormData) => Promise<ActionResult>;
   deactivateAction: (prev: unknown, fd: FormData) => Promise<ActionResult>;
@@ -36,7 +50,7 @@ export function LocationRow({
     null
   );
 
-  const otherLocations = locations.filter((l) => l.id !== location.id);
+  const parentOptions = locations.filter((l) => l.id !== location.id);
 
   function confirmDelete(e: React.FormEvent<HTMLFormElement>) {
     if (!confirm(`Delete ${location.name}? This can't be undone.`)) e.preventDefault();
@@ -45,7 +59,7 @@ export function LocationRow({
   if (editing) {
     return (
       <tr>
-        <td colSpan={6}>
+        <td colSpan={4}>
           <form action={formAction} className="form" style={{ padding: "0.5rem 0" }}>
             {state && "error" in state && <div className="alert">{state.error}</div>}
             <input type="hidden" name="id" value={location.id} />
@@ -66,8 +80,8 @@ export function LocationRow({
                 <label>Branch / parent</label>
                 <select name="parent_id" defaultValue={location.parent_id ?? ""}>
                   <option value="">— none, top level —</option>
-                  {otherLocations.map((l) => (
-                    <option key={l.id} value={l.id}>{l.code} · {l.name}</option>
+                  {parentOptions.map((l) => (
+                    <option key={l.id} value={l.id}>{parentOptionLabel(l)}</option>
                   ))}
                 </select>
               </div>
@@ -94,13 +108,18 @@ export function LocationRow({
     <tr>
       <td className="code">{location.code}</td>
       <td className="wrap">
+        {depth > 0 && <span style={{ color: "var(--ghost)" }}>{NBSP.repeat(depth * 2)}└ </span>}
         {location.name}
         {location.name_my && (
-          <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{location.name_my}</div>
+          <div style={{ color: "var(--muted)", fontSize: "0.82rem", marginLeft: depth > 0 ? "1.2rem" : 0 }}>
+            {location.name_my}
+          </div>
         )}
+        {" "}
+        {location.is_stock_location
+          ? <span className="pill ok">warehouse</span>
+          : <span className="pill">branch</span>}
       </td>
-      <td style={{ color: "var(--muted)" }}>{location.parent_name ?? "—"}</td>
-      <td>{location.is_stock_location ? <span className="pill ok">warehouse</span> : <span className="pill">org unit</span>}</td>
       <td>{location.is_active ? <span className="pill ok">active</span> : <span className="pill warn">inactive</span>}</td>
       <td>
         <span className="actions">
