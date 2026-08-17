@@ -9,15 +9,11 @@ type Location = {
   is_stock_location: boolean; is_active: boolean;
 };
 type LocationNode = Location & { depth: number };
+type Kind = "branch" | "warehouse";
 
-// Regular spaces collapse in HTML — a non-breaking space ( ) is what
-// actually survives to indent a name or a native <option>, in every browser.
+// Regular spaces collapse in HTML — a non-breaking space is what actually
+// survives to indent a name, in every browser.
 const NBSP = " ";
-
-function parentOptionLabel(l: LocationNode) {
-  return `${NBSP.repeat(l.depth * 2)}${l.depth > 0 ? "└ " : ""}${l.code} · ${l.name}` +
-    (l.is_stock_location ? " (warehouse)" : " (branch)");
-}
 
 export function LocationRow({
   location,
@@ -50,7 +46,9 @@ export function LocationRow({
     null
   );
 
-  const parentOptions = locations.filter((l) => l.id !== location.id);
+  const [kind, setKind] = useState<Kind>(location.is_stock_location ? "warehouse" : "branch");
+  const [parentId, setParentId] = useState(location.parent_id ?? "");
+  const branches = locations.filter((l) => !l.is_stock_location && l.id !== location.id);
 
   function confirmDelete(e: React.FormEvent<HTMLFormElement>) {
     if (!confirm(`Delete ${location.name}? This can't be undone.`)) e.preventDefault();
@@ -63,7 +61,30 @@ export function LocationRow({
           <form action={formAction} className="form" style={{ padding: "0.5rem 0" }}>
             {state && "error" in state && <div className="alert">{state.error}</div>}
             <input type="hidden" name="id" value={location.id} />
-            <div className="row">
+            <input type="hidden" name="is_stock_location" value={kind === "warehouse" ? "on" : ""} />
+            <input type="hidden" name="parent_id" value={kind === "warehouse" ? parentId : ""} />
+
+            <div className="field">
+              <label>What is this?</label>
+              <div className="row" style={{ gap: "1.5rem" }}>
+                <label className="check">
+                  <input
+                    type="radio" name="kind" value="warehouse" checked={kind === "warehouse"}
+                    onChange={() => setKind("warehouse")}
+                  />
+                  Warehouse
+                </label>
+                <label className="check">
+                  <input
+                    type="radio" name="kind" value="branch" checked={kind === "branch"}
+                    onChange={() => setKind("branch")}
+                  />
+                  Branch
+                </label>
+              </div>
+            </div>
+
+            <div className="row" style={{ marginTop: "0.4rem" }}>
               <div className="field">
                 <label>Code</label>
                 <input name="code" type="text" defaultValue={location.code} required />
@@ -76,21 +97,19 @@ export function LocationRow({
                 <label>Name (Burmese)</label>
                 <input name="name_my" type="text" defaultValue={location.name_my ?? ""} />
               </div>
-              <div className="field">
-                <label>Branch / parent</label>
-                <select name="parent_id" defaultValue={location.parent_id ?? ""}>
-                  <option value="">— none, top level —</option>
-                  {parentOptions.map((l) => (
-                    <option key={l.id} value={l.id}>{parentOptionLabel(l)}</option>
-                  ))}
-                </select>
-              </div>
+              {kind === "warehouse" && (
+                <div className="field">
+                  <label>Branch</label>
+                  <select value={parentId} onChange={(e) => setParentId(e.target.value)}>
+                    <option value="">— none, stands on its own —</option>
+                    {branches.map((l) => (
+                      <option key={l.id} value={l.id}>{l.code} · {l.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
             <label className="check" style={{ marginTop: "0.4rem" }}>
-              <input name="is_stock_location" type="checkbox" defaultChecked={location.is_stock_location} />
-              Holds stock
-            </label>
-            <label className="check" style={{ marginTop: "0.2rem" }}>
               <input name="is_active" type="checkbox" defaultChecked={location.is_active} />
               Active
             </label>
