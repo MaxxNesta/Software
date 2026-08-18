@@ -542,6 +542,14 @@ export function SalesVoucher({
                   </label>
                 </div>
                 {toDeliver && <input type="hidden" name="to_deliver" value="on" />}
+                {openDeliveries.length > 0 && (
+                  <div className="alert" style={{ marginTop: "0.75rem" }}>
+                    {customer?.name ?? "This customer"} already ha{openDeliveries.length === 1 ? "s" : "ve"}{" "}
+                    {openDeliveries.length} deliver{openDeliveries.length === 1 ? "y" : "ies"} waiting for an
+                    invoice. If this sale is for stock that already left, match it above instead —
+                    otherwise {toDeliver ? "this creates yet another one waiting" : "the same stock leaves twice"}.
+                  </div>
+                )}
               </div>
             )}
 
