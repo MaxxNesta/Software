@@ -146,6 +146,45 @@ export async function getActionItems(companyId: string) {
   };
 }
 
+/**
+ * Where a brand-new company is in its setup, for the dashboard's getting
+ * started checklist. Categories, items and a partner are hard prerequisites
+ * — nothing can post without them. Opening balances and opening stock are
+ * not required to trade, but skipping them is what makes a mid-year takeover
+ * come out wrong, so they are shown as steps rather than left to be
+ * discovered later.
+ *
+ * Deliberately no "opening receivables" step: AR/AP are control accounts and
+ * the ledger guard refuses a lump-sum balance on them. Carried-over invoices
+ * have to be entered as real invoices, one per partner, which is what keeps
+ * aging and payment matching meaningful.
+ */
+export async function getOnboardingStatus(companyId: string) {
+  const [r] = await sql`
+    select
+      (select count(*)::int from item_group where company_id = ${companyId}) as categories,
+      (select count(*)::int from item where company_id = ${companyId}) as items,
+      (select count(*)::int from business_partner
+        where company_id = ${companyId} and is_customer) as customers,
+      (select count(*)::int from business_partner
+        where company_id = ${companyId} and is_supplier) as suppliers,
+      (select count(*)::int from document
+        where company_id = ${companyId} and doc_type = 'OPENING_BALANCE') as openings,
+      (select count(*)::int from v_stock_on_hand where company_id = ${companyId}) as stock_rows,
+      (select count(*)::int from document
+        where company_id = ${companyId} and doc_type <> 'OPENING_BALANCE') as documents`;
+
+  return {
+    categories: Number(r.categories),
+    items: Number(r.items),
+    customers: Number(r.customers),
+    suppliers: Number(r.suppliers),
+    openings: Number(r.openings),
+    stockRows: Number(r.stock_rows),
+    documents: Number(r.documents),
+  };
+}
+
 // The invariants, run live. Every one of these should come back clean.
 export async function getHealth(companyId: string) {
   const unbalanced = await sql`

@@ -3,16 +3,17 @@ import { Boxes, Receipt, Wallet, Banknote, AlertTriangle } from "lucide-react";
 import { money } from "@/lib/db";
 import {
   getCompany, getKpis, getHealth, getAging, getDocuments, getStock, getActionItems,
-  getRevenueTrend, getTopItems, getTopCustomers,
+  getRevenueTrend, getTopItems, getTopCustomers, getOnboardingStatus,
 } from "@/lib/queries";
 import { RevenueTrendChart, RankedBarChart } from "@/components/charts";
 import { ActivityFeed, type ActivityDoc } from "@/components/activity-feed";
+import { GettingStarted, needsGettingStarted } from "@/components/getting-started";
 
 export default async function Dashboard() {
   const company = await getCompany();
   if (!company) return <div className="empty">No company found. Run <span className="m">npm run db:seed</span>.</div>;
 
-  const [kpis, health, aging, docs, stock, actionItems, revenueTrend, topItems, topCustomers] = await Promise.all([
+  const [kpis, health, aging, docs, stock, actionItems, revenueTrend, topItems, topCustomers, onboarding] = await Promise.all([
     getKpis(company.id),
     getHealth(company.id),
     getAging(company.id),
@@ -22,6 +23,7 @@ export default async function Dashboard() {
     getRevenueTrend(company.id),
     getTopItems(company.id),
     getTopCustomers(company.id),
+    getOnboardingStatus(company.id),
   ]);
 
   const healthy = health.unbalanced === 0 && health.inventoryBreaks === 0 && health.trialBalance === 0;
@@ -92,6 +94,8 @@ export default async function Dashboard() {
           {company.name_my ? `${company.name_my} · ` : ""}Financial year 2026-27 · all figures in {company.base_currency}
         </span>
       </div>
+
+      {needsGettingStarted(onboarding) && <GettingStarted status={onboarding} />}
 
       <div className="kpis">
         <div className="kpi">
