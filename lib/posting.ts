@@ -368,8 +368,9 @@ async function postOrder(input: OrderInput, docType: "SALES_ORDER" | "PURCHASE_O
 }
 
 /**
- * Delivery: stock leaves at its moving-average cost, and that cost becomes
- * COGS. This is the only sales-side document that moves inventory.
+ * Delivery: stock leaves at its FIFO cost — drawn from the oldest open lots
+ * at this location — and that cost becomes COGS. This is the only
+ * sales-side document that moves inventory.
  *
  *   Dr Cost of Goods Sold / Cr Inventory
  *
@@ -1251,8 +1252,9 @@ export async function postStockTransfer(input: TransferInput) {
 // money move back together, since that is how a small distributor's return
 // actually happens. Cost and price are reversed independently, exactly
 // mirroring how the original sale posted them independently: the stock side
-// moves at today's moving average, the revenue/payable side moves at
-// whatever this return says the price was. They are allowed to differ.
+// moves at the newest open lot's cost (estimateCurrentCost — a return has
+// no purchase price of its own to draw on), the revenue/payable side moves
+// at whatever this return says the price was. They are allowed to differ.
 
 export type ReturnLine = {
   itemId: string;

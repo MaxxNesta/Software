@@ -44,7 +44,7 @@ export default async function NewSalesInvoice({
         <span className="eyebrow">Sales</span>
         <h1>Sales voucher</h1>
         <span className="page-sub">
-          Stock leaves at its moving-average cost, revenue is recognised, and the
+          Stock leaves at its FIFO cost, revenue is recognised, and the
           balance opens against this invoice.
         </span>
       </div>
