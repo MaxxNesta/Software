@@ -39,8 +39,10 @@ the repo across machines, not just the one they were written on.
     placeholder "My Company", which doubles as the marker for telling the two
     apart from outside (both are otherwise empty and look identical).
   - **`dev`** — local `.env` points here, so `npm run dev` and test scripts
-    use it by default. Holds the full pre-wipe dataset (41 documents) as the
-    backup of everything from before the 2026-08-18 reset.
+    use it by default. Cleared too, and its company name carries a "— DEV"
+    suffix so it is obvious at a glance which environment is on screen. The
+    pre-2026-08-18 dataset it used to hold was exported first to
+    `~/erp-dev-backup-2026-08-18.json` (outside the repo, deliberately).
   - Never let a local command write to `pilot` or `main`. Anything
     destructive or schema-changing against them is a deliberate, one-off act:
     pass that URL explicitly on the command line, never from `.env`.
@@ -62,6 +64,31 @@ the repo across machines, not just the one they were written on.
   `get_runtime_logs` against the project/team above to diagnose a reported
   production error directly, rather than asking for server logs to be
   pasted in.
+
+## Shipping a change to the live site
+
+Code and data move on completely separate tracks. The Neon branches hold
+data; there is one codebase, and `git push` deploys it to whichever database
+Vercel currently points at. "Getting a new feature onto pilot" is a deploy,
+never a data operation — nothing is ever copied between branches.
+
+- **No schema change** (most work): `git push`. Vercel rebuilds and the live
+  site has it. Nothing else to do.
+- **Needs a migration**: nothing runs migrations automatically — the build
+  command is plain `next build`, and there is no `vercel.json`. Apply them by
+  hand, in this order:
+  1. `npm run db:migrate` — hits `dev` via `.env`; test locally.
+  2. `DATABASE_URL="<pilot url>" npm run db:migrate` — **before** pushing.
+  3. `git push`.
+  4. `main` only needs it when that branch is about to go live.
+
+  Migrating before deploying matters: push code expecting a column that
+  doesn't exist yet and the live site errors for whoever is using it.
+  Migrating first is safe because these migrations are additive — older code
+  ignores a new column. Re-running is harmless; `schema_migration` tracks
+  applied files per database with checksums.
+- **Symptom of a missed step 2**: the site starts erroring right after a push.
+  Run the migration against that database and it recovers without a redeploy.
 
 ## Working style
 
