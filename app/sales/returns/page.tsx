@@ -30,7 +30,6 @@ export default async function CustomerReturns() {
         <td className="wrap">{r.partner_name}</td>
         <td className="code">{r.source_doc_no ?? "—"}</td>
         <td className="r">{money(r.gross_total)}</td>
-        <td><span className={`pill ${r.status.toLowerCase()}`}>{r.status}</span></td>
       </tr>
     ),
   }));
@@ -66,9 +65,8 @@ export default async function CustomerReturns() {
               { key: "partner_name", label: "Customer", sortable: true },
               { key: "source_doc_no", label: "Against" },
               { key: "gross_total", label: "Amount", sortable: true, align: "r" },
-              { key: "status", label: "Status" },
             ]}
-            footer={<tr><td colSpan={4}>Total</td><td className="r">{money(total)}</td><td /></tr>}
+            footer={<tr><td colSpan={4}>Total</td><td className="r">{money(total)}</td></tr>}
           />
         </div>
       </section>
