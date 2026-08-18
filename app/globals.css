@@ -157,6 +157,15 @@ section { display: flex; flex-direction: column; gap: var(--s3); }
 }
 .kpi-value { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 1.35rem; letter-spacing: -0.02em; }
 .kpi-note { font-size: 0.78rem; color: var(--muted); }
+
+/* Neutral counts, deliberately quieter than .kpi/Action required — normal
+   in-flight business, not something asking to be looked at. */
+.wip-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--s2); }
+.wip-item {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.4rem 0.5rem; border-radius: var(--r-md); color: var(--ink);
+}
+.wip-item:hover { background: var(--line-soft); }
 .kpi-value.pos { color: var(--dr); }
 .kpi-value.neg { color: var(--cr); }
 

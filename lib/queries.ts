@@ -21,37 +21,13 @@ export async function getKpis(companyId: string) {
     select coalesce(sum(outstanding), 0) as total, count(*)::int as n
       from v_open_item where company_id = ${companyId} and doc_type = 'PURCHASE_INVOICE'`;
 
-  // v_grir_balance groups by whichever document posted to GR/IR clearing —
-  // a goods receipt still waiting on its bill, or a bill that arrived before
-  // the goods did. Split by doc_type: lumping both under one "receipts, not
-  // invoiced" number is wrong whenever the second case exists.
-  const grirRows = await sql`
-    select d.doc_type, coalesce(sum(g.balance), 0) as total, count(*)::int as n
-      from v_grir_balance g
-      join document d on d.id = g.document_id
-     where g.company_id = ${companyId}
-     group by d.doc_type`;
-  const grirRow = (t: string) => {
-    const r = grirRows.find((x: any) => x.doc_type === t);
-    return { total: Number(r?.total ?? 0), n: Number(r?.n ?? 0) };
-  };
-  const grirReceipts = grirRow("GOODS_RECEIPT");
-  const grirInvoices = grirRow("PURCHASE_INVOICE");
-  const grir = { total: grirReceipts.total + grirInvoices.total, n: grirReceipts.n + grirInvoices.n };
-
   const [cash] = await sql`
     select coalesce(sum(jl.base_amount), 0) as total
       from journal_line jl
       join account a on a.id = jl.account_id
      where jl.company_id = ${companyId} and a.code in ('1110', '1120')`;
 
-  const [overdue] = await sql`
-    select coalesce(sum(outstanding), 0) as total, count(*)::int as n
-      from v_open_item
-     where company_id = ${companyId} and doc_type = 'SALES_INVOICE'
-       and aging_bucket <> 'CURRENT'`;
-
-  return { stock, ar, ap, grir, grirReceipts, grirInvoices, cash, overdue };
+  return { stock, ar, ap, cash };
 }
 
 /**
@@ -60,9 +36,24 @@ export async function getKpis(companyId: string) {
  * level detail getOpenSalesOrders/getOpenPurchaseOrders/getPendingDeliveries
  * return for the fulfilment forms themselves.
  */
+/**
+ * "Open" and "overdue" are different questions. An order with no items
+ * delivered yet is completely normal mid-workflow — the customer or
+ * supplier may just not want it until later. It only becomes something to
+ * act on once its own "Needed by" date has actually passed, still with
+ * something outstanding. Same split for GR/IR: sitting open a few days is
+ * how the pattern is supposed to work, not a problem — GRIR_AGE_DAYS is
+ * where the dashboard draws the line into "this has been open too long."
+ */
+const GRIR_AGE_DAYS = 7;
+
 export async function getActionItems(companyId: string) {
   const [so] = await sql`
-    select count(distinct o.id)::int as n
+    select
+      count(distinct o.id)::int as open,
+      count(distinct o.id) filter (
+        where o.due_date is not null and o.due_date < current_date
+      )::int as overdue
       from document o
       join document_line ol on ol.document_id = o.id
       left join (
@@ -75,7 +66,11 @@ export async function getActionItems(companyId: string) {
        and (ol.base_qty - coalesce(d.delivered_qty, 0)) > 0.0001`;
 
   const [po] = await sql`
-    select count(distinct o.id)::int as n
+    select
+      count(distinct o.id)::int as open,
+      count(distinct o.id) filter (
+        where o.due_date is not null and o.due_date < current_date
+      )::int as overdue
       from document o
       join document_line ol on ol.document_id = o.id
       left join (
@@ -96,10 +91,58 @@ export async function getActionItems(companyId: string) {
          select 1 from document dd where dd.source_document_id = inv.id and dd.doc_type = 'DELIVERY'
        )`;
 
+  // Same both-directions check as getOpenDeliveries — a delivery already
+  // linked to an invoice either way (composed atomically, or fulfilling a
+  // "deliver later" invoice afterward) isn't waiting on anything.
+  const [openDeliv] = await sql`
+    select count(*)::int as n
+      from document d
+     where d.company_id = ${companyId} and d.doc_type = 'DELIVERY' and d.status = 'POSTED'
+       and not exists (
+         select 1 from document si
+          where si.doc_type = 'SALES_INVOICE' and si.status = 'POSTED'
+            and (si.source_document_id = d.id or d.source_document_id = si.id)
+       )`;
+
+  const [custOverdue] = await sql`
+    select coalesce(sum(outstanding), 0) as total, count(*)::int as n
+      from v_open_item
+     where company_id = ${companyId} and doc_type = 'SALES_INVOICE' and aging_bucket <> 'CURRENT'`;
+
+  const [supOverdue] = await sql`
+    select coalesce(sum(outstanding), 0) as total, count(*)::int as n
+      from v_open_item
+     where company_id = ${companyId} and doc_type = 'PURCHASE_INVOICE' and aging_bucket <> 'CURRENT'`;
+
+  const grirRows = await sql`
+    select d.doc_type,
+           count(*)::int as open,
+           coalesce(sum(g.balance), 0) as open_total,
+           count(*) filter (where g.days_open > ${GRIR_AGE_DAYS})::int as aged,
+           coalesce(sum(g.balance) filter (where g.days_open > ${GRIR_AGE_DAYS}), 0) as aged_total,
+           coalesce(max(g.days_open), 0)::int as oldest_days
+      from v_grir_balance g
+      join document d on d.id = g.document_id
+     where g.company_id = ${companyId}
+     group by d.doc_type`;
+  const grirRow = (t: string) => {
+    const r = grirRows.find((x: any) => x.doc_type === t);
+    return {
+      open: Number(r?.open ?? 0), openTotal: Math.abs(Number(r?.open_total ?? 0)),
+      aged: Number(r?.aged ?? 0), agedTotal: Math.abs(Number(r?.aged_total ?? 0)),
+      oldestDays: Number(r?.oldest_days ?? 0),
+    };
+  };
+
   return {
-    salesOrdersOpen: so.n as number,
-    purchaseOrdersOpen: po.n as number,
+    salesOrders: { open: Number(so.open), overdue: Number(so.overdue) },
+    purchaseOrders: { open: Number(po.open), overdue: Number(po.overdue) },
     pendingDeliveryInvoices: pd.n as number,
+    openDeliveries: openDeliv.n as number,
+    customerInvoicesOverdue: { n: Number(custOverdue.n), total: Number(custOverdue.total) },
+    supplierBillsOverdue: { n: Number(supOverdue.n), total: Number(supOverdue.total) },
+    goodsReceipts: grirRow("GOODS_RECEIPT"),
+    purchaseInvoicesAwaitingGoods: grirRow("PURCHASE_INVOICE"),
   };
 }
 

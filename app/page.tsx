@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Boxes, Receipt, Wallet, Banknote, AlertTriangle, Package } from "lucide-react";
+import { Boxes, Receipt, Wallet, Banknote, AlertTriangle } from "lucide-react";
 import { money } from "@/lib/db";
 import {
   getCompany, getKpis, getHealth, getAging, getDocuments, getStock, getActionItems,
@@ -26,44 +26,62 @@ export default async function Dashboard() {
 
   const healthy = health.unbalanced === 0 && health.inventoryBreaks === 0 && health.trialBalance === 0;
 
+  // Action required is exceptions only — blocked, overdue, or aged past a
+  // reasonable window — never just "not at its final stage yet." A sales
+  // order with nothing delivered is completely normal if the customer
+  // wanted it next week; it only belongs here once its own "Needed by" date
+  // has passed with something still outstanding. Same reasoning for GR/IR:
+  // sitting open a few days is how the pattern works, not a problem — only
+  // the aged subset (GRIR_AGE_DAYS in getActionItems) counts here.
   const actions = [
     {
-      n: actionItems.salesOrdersOpen,
-      label: `sales order${actionItems.salesOrdersOpen === 1 ? "" : "s"} waiting for delivery`,
-      href: "/documents?type=SALES_ORDER",
-      tone: "warn",
-    },
-    {
-      n: actionItems.pendingDeliveryInvoices,
-      label: `invoice${actionItems.pendingDeliveryInvoices === 1 ? "" : "s"} awaiting delivery`,
-      href: "/documents?type=SALES_INVOICE",
-      tone: "warn",
-    },
-    {
-      n: Number(kpis.overdue.n),
-      label: `invoice${Number(kpis.overdue.n) === 1 ? "" : "s"} overdue`,
-      href: "/receivables",
-      tone: "overdue",
-    },
-    {
-      n: actionItems.purchaseOrdersOpen,
-      label: `purchase order${actionItems.purchaseOrdersOpen === 1 ? "" : "s"} awaiting goods`,
-      href: "/documents?type=PURCHASE_ORDER",
-      tone: "warn",
-    },
-    {
-      n: kpis.grirReceipts.n,
-      label: `goods receipt${kpis.grirReceipts.n === 1 ? "" : "s"} waiting for a supplier invoice`,
+      n: actionItems.goodsReceipts.aged,
+      label: `goods receipt${actionItems.goodsReceipts.aged === 1 ? "" : "s"}, supplier invoice missing`,
+      detail: `oldest ${actionItems.goodsReceipts.oldestDays}d · ${money(actionItems.goodsReceipts.agedTotal)}`,
       href: "/documents?type=GOODS_RECEIPT&open=grir",
-      tone: "warn",
     },
     {
-      n: kpis.grirInvoices.n,
-      label: `supplier invoice${kpis.grirInvoices.n === 1 ? "" : "s"} waiting for the goods to arrive`,
+      n: actionItems.purchaseInvoicesAwaitingGoods.aged,
+      label: `supplier invoice${actionItems.purchaseInvoicesAwaitingGoods.aged === 1 ? "" : "s"}, goods overdue to arrive`,
+      detail: `oldest ${actionItems.purchaseInvoicesAwaitingGoods.oldestDays}d · ${money(actionItems.purchaseInvoicesAwaitingGoods.agedTotal)}`,
       href: "/documents?type=PURCHASE_INVOICE&open=grir",
-      tone: "warn",
+    },
+    {
+      n: actionItems.customerInvoicesOverdue.n,
+      label: `customer invoice${actionItems.customerInvoicesOverdue.n === 1 ? "" : "s"} overdue`,
+      detail: money(actionItems.customerInvoicesOverdue.total),
+      href: "/receivables?status=overdue",
+    },
+    {
+      n: actionItems.supplierBillsOverdue.n,
+      label: `supplier bill${actionItems.supplierBillsOverdue.n === 1 ? "" : "s"} overdue`,
+      detail: money(actionItems.supplierBillsOverdue.total),
+      href: "/payables?status=overdue",
+    },
+    {
+      n: actionItems.salesOrders.overdue,
+      label: `sales order${actionItems.salesOrders.overdue === 1 ? "" : "s"} overdue`,
+      detail: "past its own Needed-by date",
+      href: "/documents?type=SALES_ORDER",
+    },
+    {
+      n: actionItems.purchaseOrders.overdue,
+      label: `purchase order${actionItems.purchaseOrders.overdue === 1 ? "" : "s"} overdue`,
+      detail: "past its own Needed-by date",
+      href: "/documents?type=PURCHASE_ORDER",
     },
   ].filter((a) => a.n > 0);
+
+  // Work in progress is the neutral counterpart — normal open business, no
+  // threshold, nothing implying anyone forgot anything.
+  const wip = [
+    { n: actionItems.salesOrders.open, label: "sales orders open", href: "/documents?type=SALES_ORDER" },
+    { n: actionItems.openDeliveries, label: "deliveries pending invoice", href: "/documents?type=DELIVERY" },
+    { n: actionItems.purchaseOrders.open, label: "purchase orders open", href: "/documents?type=PURCHASE_ORDER" },
+    { n: actionItems.goodsReceipts.open, label: "goods receipts pending invoice", href: "/documents?type=GOODS_RECEIPT&open=grir" },
+    { n: Number(kpis.ar.n), label: "unpaid customer invoices", href: "/receivables" },
+    { n: Number(kpis.ap.n), label: "unpaid supplier bills", href: "/payables" },
+  ];
 
   return (
     <>
@@ -96,35 +114,21 @@ export default async function Dashboard() {
           <span className="kpi-value">{money(kpis.cash.total)}</span>
           <span className="kpi-note">cash and KBZ</span>
         </div>
-        <div className="kpi">
-          <span className="kpi-label"><AlertTriangle size={13} /> Overdue</span>
-          <span className="kpi-value" style={{ color: Number(kpis.overdue.total) > 0 ? "var(--bad)" : undefined }}>
-            {money(kpis.overdue.total)}
-          </span>
-          <span className="kpi-note">{kpis.overdue.n} invoice{kpis.overdue.n === 1 ? "" : "s"} past due</span>
-        </div>
-        <div className="kpi">
-          <span className="kpi-label"><Package size={13} /> Goods received, not invoiced</span>
-          <span className="kpi-value">{money(Math.abs(kpis.grirReceipts.total))}</span>
-          <span className="kpi-note">
-            {kpis.grirReceipts.n} receipt{kpis.grirReceipts.n === 1 ? "" : "s"} awaiting a supplier invoice
-          </span>
-        </div>
       </div>
 
       <section>
         <div className="card">
           <div className="card-head">
-            <h2>Action required</h2>
+            <h2><AlertTriangle size={15} style={{ verticalAlign: "-2px", marginRight: "0.3rem" }} /> Action required</h2>
             {actions.length > 0 && (
               <span className="page-sub">
-                {actions.length} thing{actions.length === 1 ? "" : "s"} waiting on you
+                {actions.length} thing{actions.length === 1 ? "" : "s"} genuinely need attention
               </span>
             )}
           </div>
           <div className="card-body">
             {actions.length === 0 ? (
-              <p className="page-sub">Nothing needs attention right now.</p>
+              <p className="page-sub">Nothing overdue, aged, or blocked right now.</p>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
                 {actions.map((a) => (
@@ -137,14 +141,38 @@ export default async function Dashboard() {
                     }}
                   >
                     <span style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-                      <span className={`pill ${a.tone}`}>{a.n}</span>
-                      <span>{a.label}</span>
+                      <span className="pill overdue">{a.n}</span>
+                      <span>
+                        {a.label}
+                        {a.detail && (
+                          <span className="page-sub" style={{ marginLeft: "0.5rem" }}>{a.detail}</span>
+                        )}
+                      </span>
                     </span>
                     <span className="m" style={{ color: "var(--dr)" }}>View →</span>
                   </Link>
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div className="card">
+          <div className="card-head">
+            <h2>Work in progress</h2>
+            <span className="page-sub">normal, in-flight business — nothing here needs a decision</span>
+          </div>
+          <div className="card-body">
+            <div className="wip-grid">
+              {wip.map((w) => (
+                <Link key={w.href + w.label} href={w.href} className="wip-item">
+                  <span className="pill">{w.n}</span>
+                  <span>{w.label}</span>
+                </Link>
+              ))}
+            </div>
           </div>
         </div>
       </section>
