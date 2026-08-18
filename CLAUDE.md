@@ -31,16 +31,25 @@ the repo across machines, not just the one they were written on.
   production branch.
 - Hosting: Vercel project "software" (`prj_4VHZiHWbYM79np3m5ogjsjDY5dKF`),
   team "Kaung Htet's projects" (`team_vPlcInd1S2X9k0g9oQveX4lc`).
-- Database: Neon Postgres, two branches. **`main` is production** — what
-  Vercel serves and what the pilot tester enters real data into. **`dev` is a
-  branch off it** (created 2026-08-18 at head), and local `.env` points there,
-  so `npm run dev` and any test script hit `dev` by default.
-  - Never let a local command write to `main`. Anything destructive or
-    schema-changing against production is a deliberate, one-off act: pass
-    that URL explicitly on the command line, never from `.env`.
-  - The `dev` branch was taken immediately before production was cleared for
-    the pilot, so it also holds the full pre-wipe dataset (41 documents) if
-    an old case ever needs reproducing.
+- Database: Neon Postgres, three branches off `main`. Which one is "live" is
+  decided solely by Vercel's `DATABASE_URL` env var, not by the branch name:
+  - **`pilot`** — what Vercel currently serves; the outside tester's data.
+    Company name is set to "MTK Co Ltd" here.
+  - **`main`** — empty and reserved for real books. Company name is still the
+    placeholder "My Company", which doubles as the marker for telling the two
+    apart from outside (both are otherwise empty and look identical).
+  - **`dev`** — local `.env` points here, so `npm run dev` and test scripts
+    use it by default. Holds the full pre-wipe dataset (41 documents) as the
+    backup of everything from before the 2026-08-18 reset.
+  - Never let a local command write to `pilot` or `main`. Anything
+    destructive or schema-changing against them is a deliberate, one-off act:
+    pass that URL explicitly on the command line, never from `.env`.
+  - The app is single-company ("first company wins" in ~16 queries, no
+    switcher), so one database serves exactly one business. Running a real
+    customer and a tester simultaneously needs a second Vercel project on the
+    same repo with its own `DATABASE_URL` — not a second company row.
+  - Vercel env var changes only take effect after a redeploy. To check which
+    branch is live without the dashboard, read the sidebar company name.
 - Wiping data: `node scripts/clear.mjs` (dry run) → add `--confirm` to act,
   `--all` to take demo master data too. It keeps everything needed to post
   (company, chart of accounts, system accounts, posting rules, fiscal
