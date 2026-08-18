@@ -92,15 +92,41 @@ preview writes to `pilot` — corrupting the tester's data while you experiment.
 This is the one case where two rows named `DATABASE_URL` is correct: different
 environments, never the same environment twice.
 
-**What this setup cannot do yet:** deploy to `pilot` and `main` independently.
-They are two *databases* behind one deployment, not two deployments — so
-"release to pilot, then release to main" is not possible while a single Vercel
-project exists. `staging` currently only buys a deployed environment running
-`dev` data. To get a real pilot → production promotion, add a second Vercel
-project on the same repo, set its production branch to `staging` and its
-`DATABASE_URL` to `pilot`, and leave this project on `main` → the real
-customer database. Worth doing when `main` holds real books; over-engineering
-before that.
+### Current mode: one project, swap the database
+
+There is one Vercel project, and `pilot` and `main` are two *databases* behind
+it — not two deployments. So only one is live at a time. Switching audience
+means editing the Production `DATABASE_URL`, redeploying, and confirming the
+sidebar company name ("MTK Co Ltd" = pilot, "My Company" = main; both are
+otherwise empty and identical). Never switch while the tester is mid-session —
+their data is safe in `pilot`, but the site would appear to have emptied.
+
+`staging` therefore only buys a deployed environment running `dev` data today.
+
+### Planned: two projects, when both must be live at once
+
+Decided but deliberately deferred (2026-08-18) — the pilot is short and
+throwaway, so swapping is enough for now. Build this when real books on `main`
+and ongoing testing have to coexist:
+
+| Project | Production branch | Production `DATABASE_URL` | Preview | Audience |
+| --- | --- | --- | --- | --- |
+| `software-tester` (new) | `staging` | `pilot` | `dev` | tester |
+| `software` (existing) | `main` | `main` | `dev` | real customer |
+
+Both track the same repo, so one `git push` keeps them in step, and the
+promotion path becomes `feature/*` → `staging` (tester validates) → `main`
+(customers). Set the production branch under Settings → Git on each project.
+
+Order matters when setting it up, or the tester loses access mid-way:
+1. Create `software-tester`, set both env vars, set its branch to `staging`,
+   deploy, and verify it shows "MTK Co Ltd".
+2. Send the tester that new URL.
+3. Only then repoint `software`'s Production row at `main` and redeploy.
+
+New Vercel projects have Authentication disabled by default, so the tester
+reaches it without an account. Every feature branch will build a preview on
+both projects — harmless duplication; turn previews off on one if it annoys.
 
 ## Shipping a change to the live site
 
