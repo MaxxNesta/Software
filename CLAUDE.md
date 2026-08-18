@@ -21,14 +21,17 @@ the repo across machines, not just the one they were written on.
 - Never commit or push without an explicit instruction in that message
   ("commit", "push", "push commit"). An earlier approval doesn't carry
   forward to later changes.
+- `main` deploys straight to the live site with no review step, so default to
+  working on a `feature/*` branch unless told otherwise — see "Git branches
+  and what deploys where" below.
 - Never stage `Software/` — a stray untracked duplicate clone of this same
   repo, stuck on an old commit. Always `git add` explicit paths, never
   `-A`/`.`.
 
 ## Deployment
 
-- GitHub: `SoftwareERPmm/Software`, `main` is both the working and
-  production branch.
+- GitHub: `SoftwareERPmm/Software`. `main` is the production branch — Vercel
+  deploys it on every push. `staging` and `feature/*` build previews instead.
 - Hosting: Vercel project "software" (`prj_4VHZiHWbYM79np3m5ogjsjDY5dKF`),
   team "Kaung Htet's projects" (`team_vPlcInd1S2X9k0g9oQveX4lc`).
 - Database: Neon Postgres, three branches off `main`. Which one is "live" is
@@ -64,6 +67,40 @@ the repo across machines, not just the one they were written on.
   `get_runtime_logs` against the project/team above to diagnose a reported
   production error directly, rather than asking for server logs to be
   pasted in.
+
+## Git branches and what deploys where
+
+`main` is the production branch: **anything pushed to it is live immediately**,
+with no review step. Work on a branch and merge when it is ready.
+
+| Push to | Vercel builds | Reads `DATABASE_URL` for | Who sees it |
+| --- | --- | --- | --- |
+| `feature/*` | Preview (own URL) | Preview → `dev` | you only (SSO) |
+| `staging` | Preview (stable branch URL) | Preview → `dev` | you only (SSO) |
+| `main` | **Production** | Production → `pilot` | everyone |
+
+```
+git checkout -b feature/x   # work; local npm run dev uses dev
+git push -u origin feature/x   # preview URL, safe to break
+git checkout staging && git merge feature/x && git push   # optional soak
+git checkout main && git merge staging && git push        # goes live
+```
+
+Preview deployments **must** have `DATABASE_URL` scoped to Preview pointing at
+`dev`. If the Production row is ticked for all environments instead, every
+preview writes to `pilot` — corrupting the tester's data while you experiment.
+This is the one case where two rows named `DATABASE_URL` is correct: different
+environments, never the same environment twice.
+
+**What this setup cannot do yet:** deploy to `pilot` and `main` independently.
+They are two *databases* behind one deployment, not two deployments — so
+"release to pilot, then release to main" is not possible while a single Vercel
+project exists. `staging` currently only buys a deployed environment running
+`dev` data. To get a real pilot → production promotion, add a second Vercel
+project on the same repo, set its production branch to `staging` and its
+`DATABASE_URL` to `pilot`, and leave this project on `main` → the real
+customer database. Worth doing when `main` holds real books; over-engineering
+before that.
 
 ## Shipping a change to the live site
 
