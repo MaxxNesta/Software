@@ -31,9 +31,24 @@ the repo across machines, not just the one they were written on.
   production branch.
 - Hosting: Vercel project "software" (`prj_4VHZiHWbYM79np3m5ogjsjDY5dKF`),
   team "Kaung Htet's projects" (`team_vPlcInd1S2X9k0g9oQveX4lc`).
-- Database: Neon Postgres. No `DATABASE_URL` is kept in any local
-  environment — ask for it fresh when a migration or a live check against
-  production is actually needed.
+- Database: Neon Postgres, two branches. **`main` is production** — what
+  Vercel serves and what the pilot tester enters real data into. **`dev` is a
+  branch off it** (created 2026-08-18 at head), and local `.env` points there,
+  so `npm run dev` and any test script hit `dev` by default.
+  - Never let a local command write to `main`. Anything destructive or
+    schema-changing against production is a deliberate, one-off act: pass
+    that URL explicitly on the command line, never from `.env`.
+  - The `dev` branch was taken immediately before production was cleared for
+    the pilot, so it also holds the full pre-wipe dataset (41 documents) if
+    an old case ever needs reproducing.
+- Wiping data: `node scripts/clear.mjs` (dry run) → add `--confirm` to act,
+  `--all` to take demo master data too. It keeps everything needed to post
+  (company, chart of accounts, system accounts, posting rules, fiscal
+  calendar, locations, units, tax codes, FOC reasons) and restarts document
+  numbering at 1. `scripts/test-empty.mjs` then proves a cleared database
+  still posts end to end — but it writes data, so re-clear after running it.
+  Do not use `migrate.mjs --reset --seed` for a fresh start: `db/seed.sql`
+  contains demo *transactions*, not just foundation.
 - If Vercel MCP tools are connected, use `get_runtime_errors`/
   `get_runtime_logs` against the project/team above to diagnose a reported
   production error directly, rather than asking for server logs to be
